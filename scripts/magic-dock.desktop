@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MAGIC Dock
+Comment=Dock that follows the Pop!_OS dock settings
+Exec=magic-dock-session
+OnlyShowIn=COSMIC;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

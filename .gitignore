@@ -1,0 +1,6 @@
+build/
+dist/
+magic-dock
+cosmic-bar
+a.out
+*.o
