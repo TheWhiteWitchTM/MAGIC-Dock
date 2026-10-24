@@ -1,12 +1,53 @@
 # MAGIC Dock
 
-A bottom, top, left, or right dock for the COSMIC desktop on Pop!_OS. It follows the dock settings Pop already stores, pins apps into stacks, and keeps a System Monitor button at the far end.
+A dock for the COSMIC desktop on Pop!_OS. It uses the edge, size, autohide, and opacity already stored by COSMIC Settings, pins apps into stacks, and keeps a System Monitor button at the far end.
 
-This tree started as a copy of COSMIC Bar. The program name is `magic-dock`. Pins are read from `~/.config/magic-dock/dock.json`, and the first launch copies `~/.config/cosmic-bar/dock.json` when that file is the only one present.
+The program is `magic-dock`. This tree started as a copy of COSMIC Bar.
 
-## What it follows
+## Download a build that runs
 
-Pop writes the dock as plain files in `~/.config/cosmic/com.system76.CosmicPanel.Dock/v1/`. MAGIC Dock reads them about once a second.
+The [`dist` branch](https://github.com/TheWhiteWitchTM/MAGIC-Dock/tree/dist) is a prebuilt bundle for a 64-bit Pop!_OS COSMIC session. Qt 6.12 is included. A normal COSMIC install already provides Wayland, glibc, and the GPU libraries the dock still loads from the system. You need glibc 2.38 or newer, which Pop!_OS 24.04 has.
+
+```bash
+curl -L -o magic-dock.tar.gz https://github.com/TheWhiteWitchTM/MAGIC-Dock/archive/refs/heads/dist.tar.gz
+tar -xzf magic-dock.tar.gz
+cd MAGIC-Dock-dist
+./scripts/replace-cosmic-dock.sh
+```
+
+That hides the COSMIC bottom dock, leaves the top panel in place, starts MAGIC Dock in this session, and starts it again at the next login. The original panel list is backed up once to `~/.config/cosmic-bar/backup/`.
+
+To try it without installing:
+
+```bash
+./magic-dock
+```
+
+Put the Pop dock back from the launcher entry **Restore COSMIC Dock**, or run `~/.local/bin/restore-cosmic-dock`. That restores the panel entries, removes the autostart file, and stops MAGIC Dock.
+
+Download the `.tar.gz`. It keeps the library symlinks in `lib/`. A zip of the same branch can turn those symlinks into plain text files, and the dock will then fail to start.
+
+## What the dock shows
+
+On the near end: Launcher, Workspaces, and Applications. They start `cosmic-launcher`, `cosmic-workspaces`, and `cosmic-app-library`.
+
+In the middle: pinned apps, stacks, and any other app that is running.
+
+On the far end: minimized windows, then System Monitor. System Monitor stays at that end.
+
+A click on a pin launches it. A click on the running app focuses its window, and a second click minimizes it. Several windows open a preview strip. A minimized window on the dock restores with a click.
+
+Drag one pin onto another to make a stack. Right-click a stack to rename it, open every app in it, or ungroup it. Right-click an app for a new window, pin, unpin, or add to a stack.
+
+While an app is opening and no window has appeared yet, its icon hops inward for up to about eight seconds.
+
+The pointer keeps the cursor from `XCURSOR_THEME` and `XCURSOR_SIZE` while it is over the bar.
+
+A second copy exits if `magic-dock` is already running.
+
+## Settings it follows
+
+COSMIC writes the dock as plain files in `~/.config/cosmic/com.system76.CosmicPanel.Dock/v1/`. MAGIC Dock reads them about once a second. Changing them in Settings, or by editing the files, moves the dock without a restart.
 
 | Pop file | What the dock does |
 | --- | --- |
@@ -16,65 +57,62 @@ Pop writes the dock as plain files in `~/.config/cosmic/com.system76.CosmicPanel
 | `padding`, `border_radius`, `opacity` | Inner padding, corner radius, and bar opacity |
 | `autohide` | `Never`, `OnOverlap`, or `Always` |
 | `autohide_behavior` | Wait, unhide delay, and the size of the handle that stays on screen |
-| `exclusive_zone` | Reserves space on the edge when true. Leaves windows free to cover the dock when false |
-| `expand_to_edges` | Full edge, or a pill centered on that edge |
+| `exclusive_zone` | Reserves space on the edge when true. Windows can cover the dock when false |
+| `expand_to_edges` | The whole edge when true. A pill centered on that edge when false |
 | `output` | `All`, `Active`, or `Name(the-connector)` |
 
-Changing those files in Settings, or by editing them, moves the dock without a restart. Fullscreen windows still hide it. Set `MAGIC_DOCK_SHOW_IN_FULLSCREEN=1` to keep it up.
+Fullscreen windows hide the dock. Set `MAGIC_DOCK_SHOW_IN_FULLSCREEN=1` to keep it on screen.
 
-The wings are the launcher, workspaces, and application library on the near end. Pinned apps and stacks sit in the middle. Minimized windows sit just before System Monitor, which is always the far-end button.
+## Pins
 
-## Launching pinned apps
+`~/.config/magic-dock/dock.json` stores pinned apps, stacks, and a `launch` map of programs that have been seen running. The first launch copies `~/.config/cosmic-bar/dock.json` when that file is the only one present. With no pin file at all, the dock starts from the COSMIC favorites list.
 
-A click launches the desktop file with `gio`, then the `Exec` line, then a program remembered from the last time that pin was actually running. The environment passed to the app is the session environment with two edits:
+Icon size, autohide, and which edge come from the COSMIC dock settings above.
 
-- `QT_QPA_PLATFORM=offscreen` is removed. The dock itself uses the offscreen plugin so it does not open a second window.
-- `QT_PLUGIN_PATH`, `QT_QPA_PLATFORM_PLUGIN_PATH`, and `LD_LIBRARY_PATH` entries that point inside this dock's own bundle are removed. A bundled dock only ships the offscreen plugin. Leaving that path in place is what made a pinned Qt app such as Vesper or Cinder start with no window. The session Qt path, for example `~/Qt/6.12.0/gcc_64`, is kept.
+## Launching an app
 
-Qt on Wayland reports an app id of reversed organization domain plus the executable name. Cinder's window id is `local.cinder.cinder` while its desktop file is `cinder`. The dock maps that id, and if the desktop file is not installed it adopts `~/Projects/<name>/share/<name>.desktop`.
+A click tries, in order, `gio launch` on the desktop file, the `Exec` line, `gtk-launch`, then a program remembered from the last time that pin was running.
 
-While an app is opening and no window has appeared yet, its icon hops inward for a short bounce, then a smaller hop, for up to about eight seconds.
+The environment passed to the app is the session environment with the dock's own Qt paths taken out:
+
+- `QT_QPA_PLATFORM=offscreen` is removed. The dock uses the offscreen plugin so Qt does not open a second window of its own.
+- `QT_PLUGIN_PATH`, `QT_QPA_PLATFORM_PLUGIN_PATH`, and `LD_LIBRARY_PATH` entries that point inside this bundle are removed. The bundle only ships the offscreen plugin. Leaving that path set makes a pinned Qt app start with no window. A Qt path elsewhere in the session is kept.
+
+Qt on Wayland reports an app id of reversed organization domain plus the executable name. The dock maps that id to the desktop file. If the desktop file is not installed, it also looks in `~/Projects/<name>/`.
 
 ## Web app icons
 
-Chrome, Chromium, Brave, and Edge install a web app icon as a file under `~/.local/share/icons/hicolor/<size>/apps/` named like `chrome-<id>-Default.png`. COSMIC looks that name up through the GTK icon cache, so a new web app keeps the wrong icon until someone runs `gtk-update-icon-cache` by hand. This dock reads the icon files directly, including Flatpak browser data under `~/.var/app/`, and notices a new applications directory or hicolor directory without a cache update. A window whose app id is `crx_<id>` is matched to that desktop file.
-
-## Pointer
-
-The dock sets a cursor on its surface so the pointer does not disappear over the bar. The theme and size come from `XCURSOR_THEME` and `XCURSOR_SIZE` (this session uses 48). It does not force a 24px cursor.
+Chrome, Chromium, Brave, and Edge install a web app icon as a file under `~/.local/share/icons/hicolor/<size>/apps/`, named like `chrome-<id>-Default.png`. The same files are read from Flatpak browser data under `~/.var/app/`. The dock reads those files directly and notices a new applications directory or hicolor directory, so a new web app does not wait on `gtk-update-icon-cache`. A window whose app id is `crx_<id>` is matched to that desktop file.
 
 ## Build
 
-Qt 6.12 (Widgets) and Wayland client libraries are required. `pkg-config` is the fallback when `QT_PREFIX` and `LD_LIBRARY_PATH` do not already point at a Qt tree.
+Qt 6 Widgets and Wayland client libraries are required, along with `g++`, `make`, and `wayland-scanner`. The published bundle is built with Qt 6.12. `pkg-config` is the fallback when `QT_PREFIX` and `LD_LIBRARY_PATH` do not already point at a Qt tree. The Qt 6.12 `.pc` files still name the prefix of the machine that built them, so the Makefile prefers a tree that actually contains the headers and libraries.
 
 ```bash
 make
 make test
+make dist
 ```
 
-`make test` runs `--self-test` and writes preview PNGs to `build/preview/`. The self-test does not rewrite your pins. The preview loads them, draws the Social stack, and checks that ink lands on the left, center, and right of a bottom dock.
+`make test` runs `--self-test` and writes preview PNGs to `build/preview/`. The self-test leaves your pins alone.
 
-`make dist` fills `dist/` with the binary, the Qt libraries it links, and the plugins it needs. `dist/magic-dock` is the launcher. Children it starts do not inherit that plugin path.
+`make dist` fills `dist/` with the binary, the Qt libraries it links, and the plugins it needs. `dist/magic-dock` is the launcher. Apps it starts keep the session Qt plugin path.
 
-## Use it as the dock
-
-This replaces the COSMIC bottom dock and the old COSMIC Bar. The top panel stays. A backup of the panel entries is written once to `~/.config/cosmic-bar/backup/`.
+To replace the COSMIC dock from a source checkout:
 
 ```bash
 make
 ./scripts/replace-cosmic-dock.sh
 ```
 
-The script links `~/.local/bin/magic-dock`, installs an autostart entry, removes the Dock entry from the COSMIC panel list, stops a running `cosmic-bar`, and starts MAGIC Dock in this session. The next login starts it the same way. The session wrapper's process name is truncated to `magic-dock-sess` by the kernel. The restore script matches that name and the script path.
-
-Put the Pop dock back with `~/.local/bin/restore-cosmic-dock`, or with Restore COSMIC Dock in the launcher. That restores the panel entries, removes the autostart file, and stops both `magic-dock` and `cosmic-bar`.
-
-## Pins
-
-`~/.config/magic-dock/dock.json` stores the pinned apps, stacks, and a `launch` map of absolute programs that have successfully been seen running. Icon size, autohide, and anchor are not stored there. Pop's dock settings win.
-
-Drag one pin onto another to make a stack. Right-click a stack to rename it. A pin with several windows opens a preview strip; one window focuses or minimizes.
+The script links `~/.local/bin/magic-dock` at this tree, installs an autostart entry, removes the Dock entry from the COSMIC panel list, stops a running `cosmic-bar` or `magic-dock`, and starts MAGIC Dock in this session. The session wrapper's process name is truncated to `magic-dock-sess` by the kernel. The restore script matches that name and the script path.
 
 ## Layout of the source
 
-`src/main.cpp` starts the offscreen Qt process and the Wayland backend. `src/settings.cpp` reads the Pop dock files. `src/apps.cpp` indexes desktop files and icons and launches apps. `src/dock.cpp` is the layout, input, and painting. `src/backend.cpp` is the layer shell, toplevels, and cursor. Protocol XML lives in `protocols/`.
+`src/main.cpp` starts the offscreen Qt process and the Wayland backend. `src/settings.cpp` reads the COSMIC dock files. `src/apps.cpp` indexes desktop files and icons and launches apps. `src/dock.cpp` is the layout, input, and painting. `src/backend.cpp` is the layer shell, toplevels, and cursor. Protocol XML lives in `protocols/`.
+
+## License
+
+MAGIC Dock is MIT. See [LICENSE](LICENSE).
+
+The prebuilt bundle also contains unmodified Qt 6.12 shared libraries (LGPL-3.0) and the ICU 73 libraries shipped with that Qt, plus Qt image-format plugins. Those files live in `lib/` and `plugins/` and can be replaced. License copies and a notice are in the bundle.
