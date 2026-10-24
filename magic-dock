@@ -1,0 +1,10 @@
+#!/bin/sh
+# Launch the bundled dock. Qt libraries and the offscreen plugin live next to this script.
+# The dock removes this plugin path from anything it starts, so pinned Qt apps
+# still get the session's real platform plugin.
+set -e
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$HERE/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$HERE/plugins/platforms"
+exec "$HERE/bin/magic-dock" "$@"

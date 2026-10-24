@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Restore COSMIC Dock
+Comment=Stop MAGIC Dock and put the original bottom dock back
+Exec=restore-cosmic-dock
+Terminal=true
+Categories=Utility;
+StartupNotify=false

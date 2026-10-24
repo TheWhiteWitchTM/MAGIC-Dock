@@ -1,0 +1,26 @@
+MAGIC Dock itself is under the MIT license in LICENSE.
+
+This bundle also includes unmodified shared libraries so it can run on a machine that does not have this Qt installed. They are dynamically linked. Replace the files in lib/ and plugins/ with interface-compatible builds if you want a different copy.
+
+Qt 6.12.0
+  libQt6Core, libQt6Gui, libQt6Widgets, libQt6DBus, libQt6Svg,
+  and the plugins under plugins/ (offscreen platform, image formats, SVG icon engine).
+  Copyright (C) The Qt Company Ltd. and other contributors.
+  Licensed under the GNU Lesser General Public License version 3.
+  A copy of the LGPL-3.0 and of the GPL-3.0 it refers to are in licenses/.
+  Corresponding source for this unmodified Qt build:
+  https://download.qt.io/official_releases/qt/6.12/6.12.0/single/
+  https://code.qt.io/cgit/qt/qtbase.git/tag/?h=v6.12.0
+  https://code.qt.io/cgit/qt/qtsvg.git/tag/?h=v6.12.0
+  https://code.qt.io/cgit/qt/qtimageformats.git/tag/?h=v6.12.0
+
+ICU 73
+  libicuuc, libicui18n, and libicudata, as shipped with that Qt build.
+  Copyright (C) Unicode, Inc. and others.
+  License text: licenses/ICU-LICENSE
+  https://icu.unicode.org/
+
+The JPEG and WebP plugins include Qt's bundled copies of those libraries.
+  licenses/libjpeg-LICENSE
+  licenses/ijg-license.txt
+  licenses/libwebp-COPYING
