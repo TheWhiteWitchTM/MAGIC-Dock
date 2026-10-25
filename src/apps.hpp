@@ -7,6 +7,11 @@
 #include <QStringList>
 #include <vector>
 
+struct AppHit {
+    QString id;
+    QString name;
+};
+
 struct DesktopAction {
     QString id;
     QString name;
@@ -46,6 +51,8 @@ public:
 
     // Absolute program to run when the desktop file is missing or gio cannot start it.
     QString programFor(const QString &appId) const;
+    // Installed apps whose name or id matches. An empty query returns nothing.
+    std::vector<AppHit> search(const QString &query, int limit) const;
     // Starts the app with a clean environment. Returns false when nothing could be started.
     bool launch(const QString &appId, const QString &fallbackExec = {}, const QString &fallbackDir = {});
 
@@ -69,4 +76,6 @@ private:
 
 QStringList splitExec(const QString &exec, const DesktopApp *app);
 QProcessEnvironment launchEnvironment();
+// Home when the desktop file has no Path. COSMIC Terminal also gets --working-directory.
+bool startDetachedApp(const QString &program, const QStringList &args, const QString &workdir, const char *how = "app");
 int runAppsSelfTest();

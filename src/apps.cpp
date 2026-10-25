@@ -12,6 +12,7 @@
 #include <QStandardPaths>
 #include <QTextStream>
 
+#include <algorithm>
 #include <cstdio>
 
 namespace {
@@ -183,13 +184,37 @@ QString discoverProject(const QString &base) {
     return {};
 }
 
-bool startProgram(const QString &program, const QStringList &args, const QString &workdir, const char *how) {
+QString launchDirectory(const QString &requested) {
+    if (!requested.isEmpty() && QFileInfo(requested).isDir()) return QFileInfo(requested).absoluteFilePath();
+    return QDir::homePath();
+}
+
+bool isCosmicTerm(const QString &program) {
+    return QFileInfo(program).fileName() == QLatin1String("cosmic-term");
+}
+
+QStringList commandArgs(const QString &program, const QStringList &args, const QString &dir) {
+    if (!isCosmicTerm(program)) return args;
+    for (const QString &arg : args) {
+        if (arg == QLatin1String("-w") || arg == QLatin1String("--working-directory")) return args;
+    }
+    QStringList out = args;
+    out << QStringLiteral("--working-directory") << dir;
+    return out;
+}
+
+}  // namespace
+
+bool startDetachedApp(const QString &program, const QStringList &args, const QString &workdir, const char *how) {
     if (program.isEmpty()) return false;
+    // The dock process is often started from its source tree. An empty Path
+    // must not inherit that directory, or a terminal opens in the dock folder.
+    const QString dir = launchDirectory(workdir);
     QProcess process;
     process.setProcessEnvironment(launchEnvironment());
     process.setProgram(program);
-    process.setArguments(args);
-    if (!workdir.isEmpty() && QFileInfo(workdir).isDir()) process.setWorkingDirectory(workdir);
+    process.setArguments(commandArgs(program, args, dir));
+    process.setWorkingDirectory(dir);
     qint64 pid = 0;
     if (!process.startDetached(&pid)) {
         std::fprintf(stderr, "magic-dock: could not start %s (%s)\n", qPrintable(program), how);
@@ -198,8 +223,6 @@ bool startProgram(const QString &program, const QStringList &args, const QString
     std::fprintf(stderr, "magic-dock: started %s (pid %lld, %s)\n", qPrintable(program), static_cast<long long>(pid), how);
     return true;
 }
-
-}  // namespace
 
 void AppIndex::scan(const QStringList &extraDirs) {
     apps_.clear();
@@ -622,22 +645,65 @@ QString AppIndex::programFor(const QString &appId) const {
     return {};
 }
 
+std::vector<AppHit> AppIndex::search(const QString &query, int limit) const {
+    std::vector<AppHit> hits;
+    const QString needle = query.trimmed().toLower();
+    if (needle.isEmpty() || limit < 1) return hits;
+    struct Ranked {
+        int rank = 2;
+        QString name;
+        QString id;
+    };
+    std::vector<Ranked> ranked;
+    for (auto it = apps_.cbegin(); it != apps_.cend(); ++it) {
+        if (it->noDisplay || it->name.isEmpty()) continue;
+        const QString name = it->name.toLower();
+        const QString id = it.key().toLower();
+        int rank = 2;
+        if (name.startsWith(needle)) rank = 0;
+        else if (name.contains(needle)) rank = 1;
+        else if (id.contains(needle)) rank = 2;
+        else continue;
+        ranked.push_back(Ranked{rank, it->name, it.key()});
+    }
+    std::sort(ranked.begin(), ranked.end(), [](const Ranked &a, const Ranked &b) {
+        if (a.rank != b.rank) return a.rank < b.rank;
+        return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+    });
+    if (static_cast<int>(ranked.size()) > limit) ranked.resize(static_cast<size_t>(limit));
+    hits.reserve(ranked.size());
+    for (const Ranked &row : ranked) hits.push_back(AppHit{row.id, row.name});
+    return hits;
+}
+
 bool AppIndex::launch(const QString &appId, const QString &fallbackExec, const QString &fallbackDir) {
     const QString resolved = adoptProject(appId);
     const DesktopApp *app = byId(resolved.isEmpty() ? appId : resolved);
-    if (app && !app->path.isEmpty()) {
-        if (startProgram(QStringLiteral("gio"), {QStringLiteral("launch"), app->path}, app->workdir, "desktop file")) return true;
+    const QString desktopDir = launchDirectory(app ? app->workdir : QString());
+    if (app && !app->exec.isEmpty()) {
         const QStringList args = splitExec(app->exec, app);
-        if (!args.isEmpty() && startProgram(args.first(), args.mid(1), app->workdir, "exec line")) return true;
-        if (startProgram(QStringLiteral("gtk-launch"), {app->id}, app->workdir, "gtk-launch")) return true;
+        // gio launch would start cosmic-term in the dock's directory. Pass the
+        // directory on the command line, and use home when the desktop file has no Path.
+        if (!args.isEmpty() && isCosmicTerm(args.first())) {
+            if (startDetachedApp(args.first(), args.mid(1), desktopDir, "terminal")) return true;
+        }
+    }
+    if (app && !app->path.isEmpty()) {
+        if (startDetachedApp(QStringLiteral("gio"), {QStringLiteral("launch"), app->path}, desktopDir, "desktop file"))
+            return true;
+        const QStringList args = splitExec(app->exec, app);
+        if (!args.isEmpty() && startDetachedApp(args.first(), args.mid(1), desktopDir, "exec line")) return true;
+        if (startDetachedApp(QStringLiteral("gtk-launch"), {app->id}, desktopDir, "gtk-launch")) return true;
     }
     const QString saved = !fallbackExec.isEmpty() ? fallbackExec : programFor(appId);
     if (!saved.isEmpty()) {
-        const QString dir = !fallbackDir.isEmpty() ? fallbackDir : QFileInfo(saved).absolutePath();
-        if (startProgram(saved, {}, dir, "saved program")) return true;
+        const bool terminal = isCosmicTerm(saved);
+        const QString dir = terminal ? launchDirectory(app && !app->workdir.isEmpty() ? app->workdir : QString())
+                                     : launchDirectory(!fallbackDir.isEmpty() ? fallbackDir : QFileInfo(saved).absolutePath());
+        if (startDetachedApp(saved, {}, dir, "saved program")) return true;
     }
     const QString id = resolved.isEmpty() ? appId : resolved;
-    if (!id.isEmpty() && startProgram(QStringLiteral("gtk-launch"), {id}, {}, "gtk-launch id")) return true;
+    if (!id.isEmpty() && startDetachedApp(QStringLiteral("gtk-launch"), {id}, QDir::homePath(), "gtk-launch id")) return true;
     std::fprintf(stderr, "magic-dock: no way to open \"%s\"\n", qPrintable(appId));
     return false;
 }
@@ -701,11 +767,21 @@ int runAppsSelfTest() {
     const bool envOk = !env.contains(QStringLiteral("QT_QPA_PLATFORM")) &&
                        env.value(QStringLiteral("QT_PLUGIN_PATH")) == QLatin1String("/tmp/user-qt-plugins") &&
                        env.value(QStringLiteral("QT_QML_IMPORT_PATH")) == QLatin1String("/tmp/user-qml");
+    const QString launchedHome = launchDirectory({});
+    const QString launchedKept = launchDirectory(QDir::tempPath());
+    const QStringList termArgs = commandArgs(QStringLiteral("/usr/bin/cosmic-term"), {}, launchedHome);
+    const QStringList plainArgs = commandArgs(QStringLiteral("/usr/bin/true"), {QStringLiteral("--version")}, launchedHome);
+    const QStringList keptFlag = commandArgs(QStringLiteral("cosmic-term"), {QStringLiteral("--working-directory"), QStringLiteral("/tmp")},
+                                             launchedHome);
+    const bool dirOk = QDir(launchedHome) == QDir::home() && QDir(launchedKept) == QDir(QDir::tempPath()) &&
+                       termArgs.size() == 2 && termArgs.at(0) == QLatin1String("--working-directory") &&
+                       QDir(termArgs.at(1)) == QDir::home() && plainArgs.size() == 1 && keptFlag.size() == 2;
     if (web != QLatin1String("chrome-abcdefghijklmnop-Default") || qt != QLatin1String("cinder") || webIcon.isNull() ||
-        qtIcon.isNull() || !envOk) {
-        std::fprintf(stderr, "magic-dock: apps self-test failed (web=%s qt=%s webIcon=%d qtIcon=%d plugins=%s)\n",
+        qtIcon.isNull() || !envOk || !dirOk) {
+        std::fprintf(stderr,
+                     "magic-dock: apps self-test failed (web=%s qt=%s webIcon=%d qtIcon=%d plugins=%s dir=%d)\n",
                      qPrintable(web), qPrintable(qt), webIcon.isNull() ? 0 : 1, qtIcon.isNull() ? 0 : 1,
-                     qPrintable(env.value(QStringLiteral("QT_PLUGIN_PATH"))));
+                     qPrintable(env.value(QStringLiteral("QT_PLUGIN_PATH"))), dirOk ? 1 : 0);
         return 1;
     }
     const QStringList args = splitExec(QStringLiteral("/usr/bin/true %F %U"), nullptr);

@@ -78,6 +78,10 @@ int main(int argc, char **argv) {
         return dock.preview(dir);
     }
 
+    // A session started from the source tree would otherwise hand that folder
+    // to every app. Home is where a desktop launcher starts a program.
+    QDir::setCurrent(QDir::homePath());
+
     const QString pidPath = QDir::homePath() + QStringLiteral("/.config/magic-dock/magic-dock.pid");
     QDir().mkpath(QFileInfo(pidPath).absolutePath());
     PidLock pidLock;

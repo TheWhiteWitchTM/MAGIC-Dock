@@ -29,11 +29,11 @@ Download the `.tar.gz`. It keeps the library symlinks in `lib/`. A zip of the sa
 
 ## What the dock shows
 
-On the near end: Launcher, Workspaces, and Applications. They start `cosmic-launcher`, `cosmic-workspaces`, and `cosmic-app-library`.
+On the near end: Launcher, Workspaces, Applications, and Search. The first three start `cosmic-launcher`, `cosmic-workspaces`, and `cosmic-app-library`. Search opens a field on the dock and launches the app you pick.
 
 In the middle: pinned apps, stacks, and any other app that is running.
 
-On the far end: minimized windows, then System Monitor. System Monitor stays at that end.
+On the far end: minimized windows, then System Monitor, then a menu. The menu has Settings, About, and Contribute. Settings opens COSMIC Settings. Contribute opens the PayPal coffee link. About names the dock and includes the same coffee link.
 
 A click on a pin launches it. A click on the running app focuses its window, and a second click minimizes it. Several windows open a preview strip. A minimized window on the dock restores with a click.
 
@@ -72,6 +72,8 @@ Icon size, autohide, and which edge come from the COSMIC dock settings above.
 ## Launching an app
 
 A click tries, in order, `gio launch` on the desktop file, the `Exec` line, `gtk-launch`, then a program remembered from the last time that pin was running.
+
+If the desktop file has no `Path`, the app starts in your home directory. The dock does not pass along its own directory. COSMIC Terminal is started with `--working-directory` set to that folder, so a terminal opened from the dock opens at home.
 
 The environment passed to the app is the session environment with the dock's own Qt paths taken out:
 

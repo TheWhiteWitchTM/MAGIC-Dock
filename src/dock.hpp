@@ -32,7 +32,7 @@ public:
 
     // Draws sample states into PNGs and checks the default Social stack. Returns 0 on success.
     int preview(const QString &directory);
-    // Checks edges, the far-end monitor button, and the opening nudge. Returns 0 on success.
+    // Checks edges, the far-end monitor button, search, the menu, and the opening nudge. Returns 0 on success.
     int selfTest();
 
     ShellSpec shellSpec() const;
@@ -127,6 +127,9 @@ private:
     void layoutPopup(Screen &screen);
     void layoutPreviews(Screen &screen);
     void layoutMenu(Screen &screen);
+    void layoutSearch(Screen &screen);
+    void layoutAbout(Screen &screen);
+    void setSearch(Screen &screen, bool open);
     void clickSlot(Screen &screen, const QString &uid);
 
     struct Hit {
