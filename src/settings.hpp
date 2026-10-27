@@ -26,4 +26,17 @@ struct CosmicDockSettings {
 };
 
 CosmicDockSettings readCosmicDockSettings(const QString &directory = QString());
+
+// Active window hint from Settings → Appearance. The color is window_hint
+// when one is set, otherwise the theme accent. hintPx is the hint thickness.
+struct CosmicChrome {
+    bool ok = false;
+    int red = 255;
+    int green = 149;
+    int blue = 0;
+    int hintPx = 3;
+    QString signature;
+};
+
+CosmicChrome readCosmicChrome(const QString &root = QString());
 int runSettingsSelfTest();

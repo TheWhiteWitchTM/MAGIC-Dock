@@ -11,6 +11,7 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QThread>
 
 #include <algorithm>
 #include <cstdio>
@@ -187,6 +188,17 @@ QString discoverProject(const QString &base) {
 QString launchDirectory(const QString &requested) {
     if (!requested.isEmpty() && QFileInfo(requested).isDir()) return QFileInfo(requested).absoluteFilePath();
     return QDir::homePath();
+}
+
+// An absolute path must exist. A bare name must be on PATH. gio cannot load a
+// desktop file whose command is missing, and it exits before any window opens.
+QString resolveProgram(const QString &program) {
+    if (program.isEmpty()) return {};
+    if (program.contains(QLatin1Char('/'))) {
+        const QFileInfo info(program);
+        return info.isExecutable() ? info.absoluteFilePath() : QString();
+    }
+    return QStandardPaths::findExecutable(program);
 }
 
 bool isCosmicTerm(const QString &program) {
@@ -680,22 +692,24 @@ bool AppIndex::launch(const QString &appId, const QString &fallbackExec, const Q
     const QString resolved = adoptProject(appId);
     const DesktopApp *app = byId(resolved.isEmpty() ? appId : resolved);
     const QString desktopDir = launchDirectory(app ? app->workdir : QString());
-    if (app && !app->exec.isEmpty()) {
-        const QStringList args = splitExec(app->exec, app);
-        // gio launch would start cosmic-term in the dock's directory. Pass the
-        // directory on the command line, and use home when the desktop file has no Path.
-        if (!args.isEmpty() && isCosmicTerm(args.first())) {
-            if (startDetachedApp(args.first(), args.mid(1), desktopDir, "terminal")) return true;
-        }
+    const QStringList args = (app && !app->exec.isEmpty()) ? splitExec(app->exec, app) : QStringList();
+    // gio launch would start cosmic-term in the dock's directory. Pass the
+    // directory on the command line, and use home when the desktop file has no Path.
+    if (!args.isEmpty() && isCosmicTerm(args.first())) {
+        if (startDetachedApp(args.first(), args.mid(1), desktopDir, "terminal")) return true;
     }
-    if (app && !app->path.isEmpty()) {
-        if (startDetachedApp(QStringLiteral("gio"), {QStringLiteral("launch"), app->path}, desktopDir, "desktop file"))
+    // Run the desktop command ourselves when it is a real program. gio exits
+    // at once when that command is missing, and startDetached would still
+    // report the failed gio process as a successful launch.
+    const QString direct = args.isEmpty() ? QString() : resolveProgram(args.first());
+    if (!direct.isEmpty()) {
+        if (startDetachedApp(direct, args.mid(1), desktopDir, "exec line")) return true;
+        if (app && !app->path.isEmpty() &&
+            startDetachedApp(QStringLiteral("gio"), {QStringLiteral("launch"), app->path}, desktopDir, "desktop file"))
             return true;
-        const QStringList args = splitExec(app->exec, app);
-        if (!args.isEmpty() && startDetachedApp(args.first(), args.mid(1), desktopDir, "exec line")) return true;
-        if (startDetachedApp(QStringLiteral("gtk-launch"), {app->id}, desktopDir, "gtk-launch")) return true;
     }
-    const QString saved = !fallbackExec.isEmpty() ? fallbackExec : programFor(appId);
+    const QString savedRaw = !fallbackExec.isEmpty() ? fallbackExec : programFor(appId);
+    const QString saved = resolveProgram(savedRaw);
     if (!saved.isEmpty()) {
         const bool terminal = isCosmicTerm(saved);
         const QString dir = terminal ? launchDirectory(app && !app->workdir.isEmpty() ? app->workdir : QString())
@@ -703,7 +717,9 @@ bool AppIndex::launch(const QString &appId, const QString &fallbackExec, const Q
         if (startDetachedApp(saved, {}, dir, "saved program")) return true;
     }
     const QString id = resolved.isEmpty() ? appId : resolved;
-    if (!id.isEmpty() && startDetachedApp(QStringLiteral("gtk-launch"), {id}, QDir::homePath(), "gtk-launch id")) return true;
+    if (direct.isEmpty() && !id.isEmpty() &&
+        startDetachedApp(QStringLiteral("gtk-launch"), {id}, QDir::homePath(), "gtk-launch id"))
+        return true;
     std::fprintf(stderr, "magic-dock: no way to open \"%s\"\n", qPrintable(appId));
     return false;
 }
@@ -763,6 +779,28 @@ int runAppsSelfTest() {
     qunsetenv("QT_QPA_PLATFORM");
     qunsetenv("QT_PLUGIN_PATH");
     qunsetenv("QT_QML_IMPORT_PATH");
+    const QString marker = root + QStringLiteral("/launched");
+    QFile markerScript(root + QStringLiteral("/mark.sh"));
+    if (!markerScript.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+    markerScript.write(("#!/bin/sh\ntouch '" + marker + "'\n").toUtf8());
+    markerScript.close();
+    markerScript.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner |
+                                QFileDevice::ReadGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                QFileDevice::ExeOther);
+    QFile missingCmd(apps + QStringLiteral("/no-such-blogy.desktop"));
+    if (!missingCmd.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+    missingCmd.write("[Desktop Entry]\n"
+                     "Type=Application\n"
+                     "Name=Missing Blogy\n"
+                     "Exec=blogy-not-on-path %F\n");
+    missingCmd.close();
+    AppIndex launchIndex;
+    launchIndex.scan({apps});
+    const bool fellThrough = launchIndex.launch(QStringLiteral("no-such-blogy"), markerScript.fileName(), QDir::tempPath());
+    for (int i = 0; i < 50 && !QFile::exists(marker); ++i) QThread::msleep(20);
+    const bool markerOk = QFile::exists(marker);
+    const QString foundTrue = resolveProgram(QStringLiteral("true"));
+    const QString missingName = resolveProgram(QStringLiteral("blogy-not-on-path"));
     QDir(root).removeRecursively();
     const bool envOk = !env.contains(QStringLiteral("QT_QPA_PLATFORM")) &&
                        env.value(QStringLiteral("QT_PLUGIN_PATH")) == QLatin1String("/tmp/user-qt-plugins") &&
@@ -777,11 +815,14 @@ int runAppsSelfTest() {
                        termArgs.size() == 2 && termArgs.at(0) == QLatin1String("--working-directory") &&
                        QDir(termArgs.at(1)) == QDir::home() && plainArgs.size() == 1 && keptFlag.size() == 2;
     if (web != QLatin1String("chrome-abcdefghijklmnop-Default") || qt != QLatin1String("cinder") || webIcon.isNull() ||
-        qtIcon.isNull() || !envOk || !dirOk) {
+        qtIcon.isNull() || !envOk || !dirOk || !fellThrough || !markerOk || foundTrue.isEmpty() ||
+        !missingName.isEmpty()) {
         std::fprintf(stderr,
-                     "magic-dock: apps self-test failed (web=%s qt=%s webIcon=%d qtIcon=%d plugins=%s dir=%d)\n",
+                     "magic-dock: apps self-test failed (web=%s qt=%s webIcon=%d qtIcon=%d plugins=%s dir=%d "
+                     "launch=%d marker=%d true=%s missing=%s)\n",
                      qPrintable(web), qPrintable(qt), webIcon.isNull() ? 0 : 1, qtIcon.isNull() ? 0 : 1,
-                     qPrintable(env.value(QStringLiteral("QT_PLUGIN_PATH"))), dirOk ? 1 : 0);
+                     qPrintable(env.value(QStringLiteral("QT_PLUGIN_PATH"))), dirOk ? 1 : 0, fellThrough ? 1 : 0,
+                     markerOk ? 1 : 0, qPrintable(foundTrue), qPrintable(missingName));
         return 1;
     }
     const QStringList args = splitExec(QStringLiteral("/usr/bin/true %F %U"), nullptr);

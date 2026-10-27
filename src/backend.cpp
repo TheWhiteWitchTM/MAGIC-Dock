@@ -17,6 +17,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <cerrno>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <wayland-client.h>
@@ -92,6 +94,15 @@ struct Win {
 
 struct Shot;
 
+struct MimeOffer {
+    BarImpl *owner = nullptr;
+    wl_data_offer *offer = nullptr;
+    bool uri = false;
+    uint32_t actions = 0;
+    uint32_t chosen = 0;
+    bool reading = false;
+};
+
 struct BarImpl {
     Backend *self = nullptr;
     ~BarImpl();
@@ -110,6 +121,20 @@ struct BarImpl {
     wp_viewporter *viewporter = nullptr;
     ext_image_copy_capture_manager_v1 *captureMgr = nullptr;
     ext_foreign_toplevel_image_capture_source_manager_v1 *sourceMgr = nullptr;
+    wl_data_device_manager *dataMgr = nullptr;
+    wl_data_device *dataDevice = nullptr;
+    int dataVersion = 0;
+    MimeOffer *drag = nullptr;
+    std::vector<std::unique_ptr<MimeOffer>> offers;
+    wl_data_offer *dropOffer = nullptr;
+    int dropFd = -1;
+    QByteArray dropBuf;
+    QSocketNotifier *dropNotifier = nullptr;
+    int dragOutput = -1;
+    double dragX = 0;
+    double dragY = 0;
+    uint32_t dragSerial = 0;
+    bool dragWanted = false;
     wl_cursor_theme *cursorTheme = nullptr;
     wl_surface *cursorSurface = nullptr;
     int cursorPx = 0;
@@ -157,6 +182,14 @@ struct BarImpl {
     void dropShot(Shot *shot);
     void allocShotBuffer(Shot *shot, uint32_t format);
     void beginFrame(Shot *shot);
+    void ensureDataDevice();
+    void closeDrop();
+    void destroyOffer(MimeOffer *offer);
+    MimeOffer *offerFor(wl_data_offer *offer);
+    void acceptDrag();
+    void moveDrag(int outputId, double x, double y, bool active);
+    void readDrop();
+    void finishDrop();
 };
 
 struct Shot {
@@ -189,7 +222,7 @@ struct Shot {
     }
 };
 
-BarImpl::~BarImpl() = default;
+BarImpl::~BarImpl() { closeDrop(); }
 
 void bufferRelease(void *data, wl_buffer *) {
     auto *buf = static_cast<Buffer *>(data);
@@ -929,6 +962,215 @@ void managerCapabilities(void *, zcosmic_toplevel_manager_v1 *, wl_array *caps) 
     std::fprintf(stderr, "magic-dock: toplevel caps %s\n", qPrintable(names.join(", ")));
 }
 
+// --- file drag onto the trash --------------------------------------------------
+
+void BarImpl::closeDrop() {
+    if (dropNotifier) {
+        QSocketNotifier *notifier = dropNotifier;
+        dropNotifier = nullptr;
+        notifier->setEnabled(false);
+        notifier->deleteLater();
+    }
+    if (dropFd >= 0) {
+        ::close(dropFd);
+        dropFd = -1;
+    }
+    dropBuf.clear();
+    dropOffer = nullptr;
+}
+
+void BarImpl::destroyOffer(MimeOffer *offer) {
+    if (!offer) return;
+    if (drag == offer) drag = nullptr;
+    wl_data_offer *proxy = offer->offer;
+    offer->offer = nullptr;
+    if (proxy && proxy != dropOffer) wl_data_offer_destroy(proxy);
+    for (auto it = offers.begin(); it != offers.end(); ++it) {
+        if (it->get() == offer) {
+            offers.erase(it);
+            break;
+        }
+    }
+}
+
+MimeOffer *BarImpl::offerFor(wl_data_offer *offer) {
+    for (const auto &item : offers) {
+        if (item->offer == offer) return item.get();
+    }
+    return nullptr;
+}
+
+void BarImpl::ensureDataDevice() {
+    if (dataDevice || !dataMgr || !seat) return;
+    dataDevice = wl_data_device_manager_get_data_device(dataMgr, seat);
+    static wl_data_device_listener listener{};
+    static bool init = false;
+    if (!init) {
+        listener.data_offer = [](void *data, wl_data_device *, wl_data_offer *id) {
+            auto *impl = static_cast<BarImpl *>(data);
+            auto offer = std::make_unique<MimeOffer>();
+            offer->owner = impl;
+            offer->offer = id;
+            MimeOffer *raw = offer.get();
+            impl->offers.push_back(std::move(offer));
+            static wl_data_offer_listener offerListener{};
+            static bool offerInit = false;
+            if (!offerInit) {
+                offerListener.offer = [](void *payload, wl_data_offer *, const char *mime) {
+                    if (mime && std::strcmp(mime, "text/uri-list") == 0) static_cast<MimeOffer *>(payload)->uri = true;
+                };
+                offerListener.source_actions = [](void *payload, wl_data_offer *, uint32_t actions) {
+                    auto *offer = static_cast<MimeOffer *>(payload);
+                    offer->actions = actions;
+                    if (offer->owner && offer->owner->drag == offer) offer->owner->acceptDrag();
+                };
+                offerListener.action = [](void *payload, wl_data_offer *, uint32_t action) {
+                    static_cast<MimeOffer *>(payload)->chosen = action;
+                };
+                offerInit = true;
+            }
+            wl_data_offer_add_listener(id, &offerListener, raw);
+        };
+        listener.enter = [](void *data, wl_data_device *, uint32_t serial, wl_surface *surface, wl_fixed_t x, wl_fixed_t y,
+                            wl_data_offer *id) {
+            auto *impl = static_cast<BarImpl *>(data);
+            impl->drag = impl->offerFor(id);
+            impl->dragSerial = serial;
+            impl->dragX = wl_fixed_to_double(x);
+            impl->dragY = wl_fixed_to_double(y);
+            impl->dragOutput = -1;
+            if (surface) {
+                auto *out = static_cast<Out *>(wl_surface_get_user_data(surface));
+                if (out) impl->dragOutput = out->id;
+            }
+            impl->acceptDrag();
+            impl->moveDrag(impl->dragOutput, impl->dragX, impl->dragY, true);
+        };
+        listener.leave = [](void *data, wl_data_device *) {
+            auto *impl = static_cast<BarImpl *>(data);
+            const int output = impl->dragOutput;
+            MimeOffer *offer = impl->drag;
+            impl->drag = nullptr;
+            if (offer && !offer->reading) impl->destroyOffer(offer);
+            impl->moveDrag(output, -1, -1, false);
+        };
+        listener.motion = [](void *data, wl_data_device *, uint32_t, wl_fixed_t x, wl_fixed_t y) {
+            auto *impl = static_cast<BarImpl *>(data);
+            impl->dragX = wl_fixed_to_double(x);
+            impl->dragY = wl_fixed_to_double(y);
+            impl->acceptDrag();
+            impl->moveDrag(impl->dragOutput, impl->dragX, impl->dragY, true);
+        };
+        listener.drop = [](void *data, wl_data_device *) {
+            auto *impl = static_cast<BarImpl *>(data);
+            MimeOffer *offer = impl->drag;
+            impl->acceptDrag();
+            const bool take = offer && offer->uri && impl->dragWanted;
+            impl->drag = nullptr;
+            if (!take) {
+                if (offer) impl->destroyOffer(offer);
+                impl->moveDrag(impl->dragOutput, impl->dragX, impl->dragY, false);
+                return;
+            }
+            int fds[2];
+            if (::pipe(fds) != 0) {
+                impl->destroyOffer(offer);
+                impl->moveDrag(impl->dragOutput, impl->dragX, impl->dragY, false);
+                return;
+            }
+            ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+            ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+            ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
+            wl_data_offer_receive(offer->offer, "text/uri-list", fds[1]);
+            ::close(fds[1]);
+            wl_display_flush(impl->dpy);
+            offer->reading = true;
+            impl->closeDrop();
+            impl->dropOffer = offer->offer;
+            impl->dropFd = fds[0];
+            impl->dropBuf.clear();
+            impl->dropNotifier = new QSocketNotifier(fds[0], QSocketNotifier::Read);
+            QObject::connect(impl->dropNotifier, &QSocketNotifier::activated, impl->dropNotifier, [impl](int) { impl->readDrop(); });
+            impl->readDrop();
+        };
+        listener.selection = [](void *data, wl_data_device *, wl_data_offer *id) {
+            auto *impl = static_cast<BarImpl *>(data);
+            if (!id) return;
+            MimeOffer *offer = impl->offerFor(id);
+            if (offer && offer != impl->drag && !offer->reading) impl->destroyOffer(offer);
+        };
+        init = true;
+    }
+    wl_data_device_add_listener(dataDevice, &listener, this);
+}
+
+void BarImpl::acceptDrag() {
+    dragWanted = false;
+    if (!drag || !drag->offer) return;
+    if (drag->uri && self && self->acceptsDrop) dragWanted = self->acceptsDrop(dragOutput, dragX, dragY);
+    const bool hot = dragWanted;
+    const char *mime = hot ? "text/uri-list" : nullptr;
+    wl_data_offer_accept(drag->offer, dragSerial, mime);
+    if (dataVersion < 3) return;
+    uint32_t preferred = WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+    if (hot) {
+        if (drag->actions & WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE)
+            preferred = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+        else if (drag->actions & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY)
+            preferred = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+        else
+            preferred = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+    }
+    wl_data_offer_set_actions(drag->offer, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE | WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY,
+                              preferred);
+}
+
+void BarImpl::moveDrag(int outputId, double x, double y, bool active) {
+    if (!self || !self->onFileDrag) return;
+    self->onFileDrag(outputId, x, y, active);
+}
+
+void BarImpl::readDrop() {
+    if (dropFd < 0) return;
+    char buf[4096];
+    while (true) {
+        const ssize_t n = ::read(dropFd, buf, sizeof buf);
+        if (n > 0) {
+            dropBuf.append(buf, static_cast<int>(n));
+            continue;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
+        break;
+    }
+    finishDrop();
+}
+
+void BarImpl::finishDrop() {
+    wl_data_offer *offer = dropOffer;
+    const int version = dataVersion;
+    QByteArray bytes;
+    bytes.swap(dropBuf);
+    closeDrop();
+    if (offer) {
+        if (version >= 3) wl_data_offer_finish(offer);
+        wl_data_offer_destroy(offer);
+    }
+    for (auto it = offers.begin(); it != offers.end();) {
+        if (!(*it)->offer || (*it)->offer == offer) it = offers.erase(it);
+        else ++it;
+    }
+    if (!self || !self->onFileDrop || bytes.isEmpty()) return;
+    QStringList uris;
+    const QString text = QString::fromUtf8(bytes);
+    for (QString line : text.split(QLatin1Char('\n'))) {
+        line.replace(QLatin1Char('\r'), QString());
+        line = line.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) continue;
+        uris << line;
+    }
+    if (!uris.isEmpty()) self->onFileDrop(uris);
+}
+
 // --- pointer / keyboard --------------------------------------------------------
 
 void pointerEnter(void *data, wl_pointer *pointer, uint32_t serial, wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
@@ -1123,6 +1365,12 @@ void registryGlobal(void *data, wl_registry *registry, uint32_t name, const char
             init = true;
         }
         wl_seat_add_listener(impl->seat, &listener, impl);
+        impl->ensureDataDevice();
+    } else if (interface == QLatin1String("wl_data_device_manager")) {
+        const uint32_t ver = std::min(version, 3u);
+        impl->dataVersion = static_cast<int>(ver);
+        impl->dataMgr = static_cast<wl_data_device_manager *>(bind(&wl_data_device_manager_interface, ver));
+        impl->ensureDataDevice();
     } else if (interface == QLatin1String("wl_output")) {
         auto out = std::make_unique<Out>();
         out->impl = impl;
@@ -1197,6 +1445,7 @@ bool Backend::init() {
     if (!d->captureMgr || !d->sourceMgr) {
         std::fprintf(stderr, "magic-dock: no image-copy capture; window previews will use icons\n");
     }
+    if (!d->dataDevice) std::fprintf(stderr, "magic-dock: no data device; file drops on the trash are disabled\n");
     for (auto &out : d->outputs) d->ensureSurface(out.get());
     wl_display_roundtrip(d->dpy);
     wl_display_flush(d->dpy);

@@ -1,6 +1,6 @@
 # MAGIC Dock
 
-A dock for the COSMIC desktop on Pop!_OS. It uses the edge, size, autohide, and opacity already stored by COSMIC Settings, pins apps into stacks, and keeps a System Monitor button at the far end.
+A dock for the COSMIC desktop on Pop!_OS. It uses the edge, size, autohide, and opacity already stored by COSMIC Settings, pins apps into stacks, and keeps switchable applets at the far end.
 
 The program is `magic-dock`. This tree started as a copy of COSMIC Bar.
 
@@ -33,11 +33,19 @@ On the near end: Launcher, Workspaces, Applications, and Search. The first three
 
 In the middle: pinned apps, stacks, and any other app that is running.
 
-On the far end: minimized windows, then System Monitor, then a menu. The menu has Settings, About, and Contribute. Settings opens COSMIC Settings. Contribute opens the PayPal coffee link. About names the dock and includes the same coffee link.
+On the far end: minimized windows, then the applets, then a menu. The applets are Trash, Grok, and System Monitor. Each one can be shown or hidden from the menu under Applets. All three can be off. The menu stays.
+
+Trash opens the wastebasket. Right-click it to empty it. Drop files on the trash icon, or on its menu, to throw them away. Drop a pinned app on it to take that pin off the dock. Drop a stack on it and the dock asks before the whole stack leaves.
+
+Grok sits just left of System Monitor. The ring is how much of the Grok allowance is still left. Above 70 it is green, down through 11 it is orange, and 10 or less is red. Until the number is known the ring is gray and shows a dash. A blue badge appears while Grok bots are running, and the badge shows how many. Hovering it opens a card with two tabs. Summary shows what is left, the prepaid balance, and usage by product. Bots lists who is on the desk, with a role and the latest note, and whether the writer is up. The card stays up while the pointer moves onto it, so the tabs can be clicked. One click on the ring opens Grogy, the same way one click on the meters opens System Monitor. The dock looks for `grogy` on `PATH` and remembers that program.
+
+The meters still open System Monitor. The top bar is CPU and the bottom bar is memory, colored from green through orange to red. Hovering them shows a card with the percentages. A running app gets a green badge. One window is a dot, and several windows show a count. A stack folder uses that same green badge for every open window inside it, including windows in a nested stack, and the folder always shows the number. The trash badge is red and shows how many items are in the wastebasket, including other disks.
+
+The menu has Settings, About, and Contribute, then the applet switches. Settings opens COSMIC Settings. Contribute opens the PayPal coffee link. About names the dock and includes the same coffee link.
 
 A click on a pin launches it. A click on the running app focuses its window, and a second click minimizes it. Several windows open a preview strip. A minimized window on the dock restores with a click.
 
-Drag one pin onto another to make a stack. Right-click a stack to rename it, open every app in it, or ungroup it. Right-click an app for a new window, pin, unpin, or add to a stack.
+Drag one pin onto the middle of another to make a stack. Drag a stack onto the middle of a stack to nest it, or drop it into an open stack. Drag past a pin to reorder. A stack is drawn as a yellow folder, so one app in a stack still looks like a stack. A nested stack adds a darker tab behind that folder. While that stack is open, or one of its windows is picked from a preview strip, the dock icon keeps the accent border. Opening it lists every open window in the stack, including windows from a nested stack, as the same cards a multi-window app uses on the dock. A click focuses, minimizes, or restores that window and closes the stack. The close mark on a card closes the window and leaves the stack up. A nested folder shows the same count, and opening it beside the parent lists only the windows in that folder. Right-click a stack for Open All, Rename, or Stack. Stack is the page where you split it back onto the dock or unpin the whole thing. Both ask first. With the stack open, the ··· button opens that same page, and double-clicking the title still renames it. A click on a nested folder opens that folder beside the one you already have open, on the left or the right, so icons can be dragged from one into the other. Click the same folder again to close the side. Drag an icon onto another inside an open stack to reorder them, or onto a nested folder to drop it inside. Drag an app or a nested stack out of a popup and onto the dock to lift it out. Add to Stack moves an app into the stack you pick, including from a folder up into the stack that holds that folder. Right-click an app for a new window, pin, unpin, send to the desktop, or add to a stack. Unpin works on an app inside a stack and takes it off the dock. Remove from Stack leaves that app on the dock as its own pin. Send to Desktop writes a launcher into the desktop folder.
 
 While an app is opening and no window has appeared yet, its icon hops inward for up to about eight seconds.
 
@@ -52,9 +60,10 @@ COSMIC writes the dock as plain files in `~/.config/cosmic/com.system76.CosmicPa
 | Pop file | What the dock does |
 | --- | --- |
 | `anchor` | `Top`, `Bottom`, `Left`, or `Right` |
-| `margin`, `anchor_gap` | Gap between the dock and the screen edge |
+| `margin`, `anchor_gap` | Gap between the dock and the screen edge. A zero margin still keeps two pixels, so the border is not cut off |
 | `size` | `XS` 24, `S` 32, `M` 40, `L` 48, `XL` 56. `Custom(n)` snaps to a multiple of 4, then uses 70% |
 | `padding`, `border_radius`, `opacity` | Inner padding, corner radius, and bar opacity |
+| Theme `window_hint`, else `accent` | Border color on the bar and every popup. Read from the active light or dark theme. The stroke stays tighter than Active window hint size |
 | `autohide` | `Never`, `OnOverlap`, or `Always` |
 | `autohide_behavior` | Wait, unhide delay, and the size of the handle that stays on screen |
 | `exclusive_zone` | Reserves space on the edge when true. Windows can cover the dock when false |
@@ -63,9 +72,11 @@ COSMIC writes the dock as plain files in `~/.config/cosmic/com.system76.CosmicPa
 
 Fullscreen windows hide the dock. Set `MAGIC_DOCK_SHOW_IN_FULLSCREEN=1` to keep it on screen.
 
+Popups sit clear of the dock and stay inset from the screen edge, so the last row of a stack, a menu, or a window card is not cut off by the bar.
+
 ## Pins
 
-`~/.config/magic-dock/dock.json` stores pinned apps, stacks, and a `launch` map of programs that have been seen running. The first launch copies `~/.config/cosmic-bar/dock.json` when that file is the only one present. With no pin file at all, the dock starts from the COSMIC favorites list.
+`~/.config/magic-dock/dock.json` stores pinned apps, stacks, which applets are shown, a `launch` map of programs that have been seen running, and the Grogy program under `tools` once it has been found. Version 4 writes each stack as `children`, which can be app ids or nested stacks. An older file that lists `apps` still loads, and the next save writes the new shape. The first launch copies `~/.config/cosmic-bar/dock.json` when that file is the only one present. With no pin file at all, the dock starts from the COSMIC favorites list.
 
 Icon size, autohide, and which edge come from the COSMIC dock settings above.
 

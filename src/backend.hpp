@@ -5,6 +5,7 @@
 #include <QRect>
 #include <QRegion>
 #include <QString>
+#include <QStringList>
 #include <functional>
 #include <vector>
 
@@ -97,6 +98,11 @@ public:
     std::function<void(const PointerEv &)> onPointer;
     std::function<void(const KeyEv &)> onKey;
     std::function<void()> onOutputs;
+    // File drag over the dock. acceptsDrop is asked on each motion. onFileDrag
+    // is false when the drag leaves. onFileDrop receives text/uri-list lines.
+    std::function<bool(int outputId, double x, double y)> acceptsDrop;
+    std::function<void(int outputId, double x, double y, bool active)> onFileDrag;
+    std::function<void(const QStringList &uris)> onFileDrop;
     PaintFn paint;
 
     QImage lastFrame() const { return lastFrame_; }

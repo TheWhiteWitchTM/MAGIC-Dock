@@ -130,6 +130,16 @@ int main(int argc, char **argv) {
         dock.key(event);
         backend.requestRender();
     };
+    backend.acceptsDrop = [&dock](int outputId, double x, double y) { return dock.acceptsFileDrop(outputId, x, y); };
+    backend.onFileDrag = [&dock, &backend](int outputId, double x, double y, bool active) {
+        dock.fileDrag(outputId, x, y, active);
+        if (dock.tick()) backend.requestRender();
+        else backend.requestRender();
+    };
+    backend.onFileDrop = [&dock, &backend](const QStringList &uris) {
+        dock.dropFiles(uris);
+        backend.requestRender();
+    };
     backend.onWindows = [&dock, &backend]() {
         dock.setWindows(backend.windows());
         backend.requestRender();
