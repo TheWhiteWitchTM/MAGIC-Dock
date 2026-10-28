@@ -4,9 +4,11 @@ A dock for the COSMIC desktop on Pop!_OS. It uses the edge, size, autohide, and 
 
 The program is `magic-dock`. This tree started as a copy of COSMIC Bar.
 
-## Download a build that runs
+Install a prebuilt bundle, or build it, with every step in [INSTALL.md](INSTALL.md). Changes are in [CHANGELOG.md](CHANGELOG.md).
 
-The [`dist` branch](https://github.com/TheWhiteWitchTM/MAGIC-Dock/tree/dist) is a prebuilt bundle for a 64-bit Pop!_OS COSMIC session. Qt 6.12 is included. A normal COSMIC install already provides Wayland, glibc, and the GPU libraries the dock still loads from the system. You need glibc 2.38 or newer, which Pop!_OS 24.04 has.
+## Run a prebuilt bundle
+
+The [`dist` branch](https://github.com/TheWhiteWitchTM/MAGIC-Dock/tree/dist) is a 64-bit build for a Pop!_OS COSMIC session. Qt 6.12 is included. A normal COSMIC install already provides Wayland, glibc, and the GPU libraries. The dock needs glibc 2.38 or newer. Pop!_OS 24.04 has that.
 
 ```bash
 curl -L -o magic-dock.tar.gz https://github.com/TheWhiteWitchTM/MAGIC-Dock/archive/refs/heads/dist.tar.gz
@@ -15,17 +17,11 @@ cd MAGIC-Dock-dist
 ./scripts/replace-cosmic-dock.sh
 ```
 
-That hides the COSMIC bottom dock, leaves the top panel in place, starts MAGIC Dock in this session, and starts it again at the next login. The original panel list is backed up once to `~/.config/cosmic-bar/backup/`.
+Run that from a terminal inside the COSMIC session. The script hides the COSMIC bottom dock, leaves the top panel in place, starts MAGIC Dock now, and starts it again at the next login. The original panel list is backed up once to `~/.config/cosmic-bar/backup/`.
 
-To try it without installing:
+Download the `.tar.gz`. It keeps the library symlinks in `lib/`. A zip of the same branch stores those symlinks as plain text files, and the dock then fails to start.
 
-```bash
-./magic-dock
-```
-
-Put the Pop dock back from the launcher entry **Restore COSMIC Dock**, or run `~/.local/bin/restore-cosmic-dock`. That restores the panel entries, removes the autostart file, and stops MAGIC Dock.
-
-Download the `.tar.gz`. It keeps the library symlinks in `lib/`. A zip of the same branch can turn those symlinks into plain text files, and the dock will then fail to start.
+To try the bundle without replacing the COSMIC dock, run `./magic-dock` from the unpacked folder. Put the Pop dock back from the launcher entry **Restore COSMIC Dock**, or run `~/.local/bin/restore-cosmic-dock`. The full account of what those commands change is in [INSTALL.md](INSTALL.md).
 
 ## What the dock shows
 
@@ -35,19 +31,48 @@ In the middle: pinned apps, stacks, and any other app that is running.
 
 On the far end: minimized windows, then the applets, then a menu. The applets are Trash, Grok, and System Monitor. Each one can be shown or hidden from the menu under Applets. All three can be off. The menu stays.
 
-Trash opens the wastebasket. Right-click it to empty it. Drop files on the trash icon, or on its menu, to throw them away. Drop a pinned app on it to take that pin off the dock. Drop a stack on it and the dock asks before the whole stack leaves.
+### Trash
 
-Grok sits just left of System Monitor. The ring is how much of the Grok allowance is still left. Above 70 it is green, down through 11 it is orange, and 10 or less is red. Until the number is known the ring is gray and shows a dash. A blue badge appears while Grok bots are running, and the badge shows how many. Hovering it opens a card with two tabs. Summary shows what is left, the prepaid balance, and usage by product. Bots lists who is on the desk, with a role and the latest note, and whether the writer is up. The card stays up while the pointer moves onto it, so the tabs can be clicked. One click on the ring opens Grogy, the same way one click on the meters opens System Monitor. The dock looks for `grogy` on `PATH` and remembers that program.
+Trash opens the wastebasket. Right-click it to empty it. Drop files on the trash icon, or on its menu, to throw them away. Drop a pinned app on it to take that pin off the dock. Drop a stack on it and the dock asks before the whole stack leaves. The trash badge is red and shows how many items are in the wastebasket, including other disks.
 
-The meters still open System Monitor. The top bar is CPU and the bottom bar is memory, colored from green through orange to red. Hovering them shows a card with the percentages. A running app gets a green badge. One window is a dot, and several windows show a count. A stack folder uses that same green badge for every open window inside it, including windows in a nested stack, and the folder always shows the number. The trash badge is red and shows how many items are in the wastebasket, including other disks.
+### Grok
 
-The menu has Settings, About, and Contribute, then the applet switches. Settings opens COSMIC Settings. Contribute opens the PayPal coffee link. About names the dock and includes the same coffee link.
+Grok sits just left of System Monitor. The ring is how much of the Grok allowance is still left. Above 70 it is green, down through 11 it is orange, and 10 or less is red. Until the number is known the ring is gray and shows a dash. A blue badge appears while Grok bots are running, and the badge shows how many.
+
+Hovering the ring opens a card with two tabs. Summary shows what is left, the prepaid balance, and usage by product. Bots lists who is on the desk, with a role and the latest note, and whether the writer is up. The card stays up while the pointer moves onto it, so the tabs can be clicked. One click on the ring opens Grogy, the same way one click on the meters opens System Monitor. The dock looks for `grogy` on `PATH` and remembers that program. `MAGIC_DOCK_GROGY` names a program to use instead.
+
+### System Monitor
+
+The meters open System Monitor. The top bar is CPU and the bottom bar is memory, colored from green through orange to red. Hovering them shows a card with the percentages.
+
+### Windows and badges
+
+A running app gets a green badge. One window is a dot, and several windows show a count. A stack folder uses that same green badge for every open window inside it, including windows in a nested stack, and the folder always shows the number.
 
 A click on a pin launches it. A click on the running app focuses its window, and a second click minimizes it. Several windows open a preview strip. A minimized window on the dock restores with a click.
 
-Drag one pin onto the middle of another to make a stack. Drag a stack onto the middle of a stack to nest it, or drop it into an open stack. Drag past a pin to reorder. A stack is drawn as a yellow folder, so one app in a stack still looks like a stack. A nested stack adds a darker tab behind that folder. While that stack is open, or one of its windows is picked from a preview strip, the dock icon keeps the accent border. Opening it lists every open window in the stack, including windows from a nested stack, as the same cards a multi-window app uses on the dock. A click focuses, minimizes, or restores that window and closes the stack. The close mark on a card closes the window and leaves the stack up. A nested folder shows the same count, and opening it beside the parent lists only the windows in that folder. Right-click a stack for Open All, Rename, or Stack. Stack is the page where you split it back onto the dock or unpin the whole thing. Both ask first. With the stack open, the ··· button opens that same page, and double-clicking the title still renames it. A click on a nested folder opens that folder beside the one you already have open, on the left or the right, so icons can be dragged from one into the other. Click the same folder again to close the side. Drag an icon onto another inside an open stack to reorder them, or onto a nested folder to drop it inside. Drag an app or a nested stack out of a popup and onto the dock to lift it out. Add to Stack moves an app into the stack you pick, including from a folder up into the stack that holds that folder. Right-click an app for a new window, pin, unpin, send to the desktop, or add to a stack. Unpin works on an app inside a stack and takes it off the dock. Remove from Stack leaves that app on the dock as its own pin. Send to Desktop writes a launcher into the desktop folder.
-
 While an app is opening and no window has appeared yet, its icon hops inward for up to about eight seconds.
+
+### Stacks
+
+Drag one pin onto the middle of another to make a stack. Drag a stack onto the middle of a stack to nest it, or drop it into an open stack. Drag past a pin to reorder. A stack is drawn as a yellow folder, so one app in a stack still looks like a stack. A nested stack adds a darker tab behind that folder.
+
+While that stack is open, or one of its windows is picked from a preview strip, the dock icon keeps the accent border. Opening it lists every open window in the stack, including windows from a nested stack, as the same cards a multi-window app uses on the dock.
+
+- A click focuses, minimizes, or restores that window and closes the stack.
+- The close mark on a card closes the window and leaves the stack up.
+- A nested folder shows the same count. Opening it beside the parent lists only the windows in that folder.
+- Right-click a stack for Open All, Rename, or Stack. Stack is the page where you split it back onto the dock or unpin the whole thing. Both ask first.
+- With the stack open, the ··· button opens that same page, and double-clicking the title still renames it.
+- A click on a nested folder opens that folder beside the one you already have open, on the left or the right, so icons can be dragged from one into the other. Click the same folder again to close the side.
+- Drag an icon onto another inside an open stack to reorder them, or onto a nested folder to drop it inside.
+- Drag an app or a nested stack out of a popup and onto the dock to lift it out.
+- Add to Stack moves an app into the stack you pick, including from a folder up into the stack that holds that folder.
+- Right-click an app for a new window, pin, unpin, send to the desktop, or add to a stack. Unpin works on an app inside a stack and takes it off the dock. Remove from Stack leaves that app on the dock as its own pin. Send to Desktop writes a launcher into the desktop folder.
+
+### Menu, cursor, and a second copy
+
+The menu has Settings, About, and Contribute, then the applet switches. Settings opens COSMIC Settings. Contribute opens the [PayPal coffee link](https://www.paypal.com/ncp/payment/4P85EQRES3RGU). About names the dock and includes the same link.
 
 The pointer keeps the cursor from `XCURSOR_THEME` and `XCURSOR_SIZE` while it is over the bar.
 
@@ -70,7 +95,7 @@ COSMIC writes the dock as plain files in `~/.config/cosmic/com.system76.CosmicPa
 | `expand_to_edges` | The whole edge when true. A pill centered on that edge when false |
 | `output` | `All`, `Active`, or `Name(the-connector)` |
 
-Fullscreen windows hide the dock. Set `MAGIC_DOCK_SHOW_IN_FULLSCREEN=1` to keep it on screen.
+Fullscreen windows hide the dock. Set `MAGIC_DOCK_SHOW_IN_FULLSCREEN=1` to keep it on screen. `COSMIC_BAR_SHOW_IN_FULLSCREEN` does the same.
 
 Popups sit clear of the dock and stay inset from the screen edge, so the last row of a stack, a menu, or a window card is not cut off by the bar.
 
@@ -97,32 +122,9 @@ Qt on Wayland reports an app id of reversed organization domain plus the executa
 
 Chrome, Chromium, Brave, and Edge install a web app icon as a file under `~/.local/share/icons/hicolor/<size>/apps/`, named like `chrome-<id>-Default.png`. The same files are read from Flatpak browser data under `~/.var/app/`. The dock reads those files directly and notices a new applications directory or hicolor directory, so a new web app does not wait on `gtk-update-icon-cache`. A window whose app id is `crx_<id>` is matched to that desktop file.
 
-## Build
-
-Qt 6 Widgets and Wayland client libraries are required, along with `g++`, `make`, and `wayland-scanner`. The published bundle is built with Qt 6.12. `pkg-config` is the fallback when `QT_PREFIX` and `LD_LIBRARY_PATH` do not already point at a Qt tree. The Qt 6.12 `.pc` files still name the prefix of the machine that built them, so the Makefile prefers a tree that actually contains the headers and libraries.
-
-```bash
-make
-make test
-make dist
-```
-
-`make test` runs `--self-test` and writes preview PNGs to `build/preview/`. The self-test leaves your pins alone.
-
-`make dist` fills `dist/` with the binary, the Qt libraries it links, and the plugins it needs. `dist/magic-dock` is the launcher. Apps it starts keep the session Qt plugin path.
-
-To replace the COSMIC dock from a source checkout:
-
-```bash
-make
-./scripts/replace-cosmic-dock.sh
-```
-
-The script links `~/.local/bin/magic-dock` at this tree, installs an autostart entry, removes the Dock entry from the COSMIC panel list, stops a running `cosmic-bar` or `magic-dock`, and starts MAGIC Dock in this session. The session wrapper's process name is truncated to `magic-dock-sess` by the kernel. The restore script matches that name and the script path.
-
 ## Layout of the source
 
-`src/main.cpp` starts the offscreen Qt process and the Wayland backend. `src/settings.cpp` reads the COSMIC dock files. `src/apps.cpp` indexes desktop files and icons and launches apps. `src/dock.cpp` is the layout, input, and painting. `src/backend.cpp` is the layer shell, toplevels, and cursor. Protocol XML lives in `protocols/`.
+`src/main.cpp` starts the offscreen Qt process and the Wayland backend. `src/settings.cpp` reads the COSMIC dock files. `src/apps.cpp` indexes desktop files and icons and launches apps. `src/dock.cpp` is the layout, input, and painting. `src/backend.cpp` is the layer shell, toplevels, and cursor. Protocol XML lives in `protocols/`. The build rules are in the `Makefile`. `scripts/bundle-dist.sh` fills `dist/`. `scripts/replace-cosmic-dock.sh` and `scripts/restore-cosmic-dock.sh` swap this dock with the COSMIC one.
 
 ## License
 
