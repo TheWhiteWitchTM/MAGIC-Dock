@@ -4,6 +4,7 @@ Dates are the days the changes landed on `main`. The prebuilt files live on the 
 
 ## 2026-10-28
 
+- README opens with a picture of the running dock and an open stack.
 - Install and build steps moved to [INSTALL.md](INSTALL.md), including the compiler packages, Wayland, and Qt 6.12 from the online installer or from aqtinstall.
 - README covers the dock itself and points at that install guide.
 

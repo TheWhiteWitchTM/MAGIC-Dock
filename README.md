@@ -2,6 +2,8 @@
 
 A dock for the COSMIC desktop on Pop!_OS. It uses the edge, size, autohide, and opacity already stored by COSMIC Settings, pins apps into stacks, and keeps switchable applets at the far end.
 
+![MAGIC Dock on Pop!_OS. Mira beside the running dock with the My Apps stack open, showing Vesper and a nested Editors folder.](resources/announce.png)
+
 The program is `magic-dock`. This tree started as a copy of COSMIC Bar.
 
 Install a prebuilt bundle, or build it, with every step in [INSTALL.md](INSTALL.md). Changes are in [CHANGELOG.md](CHANGELOG.md).
