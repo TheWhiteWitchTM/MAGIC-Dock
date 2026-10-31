@@ -2,6 +2,12 @@
 
 Dates are the days the changes landed on `main`. The prebuilt files live on the [`dist` branch](https://github.com/TheWhiteWitchTM/MAGIC-Dock/tree/dist) and follow the same days.
 
+## 2026-10-31
+
+- Version 0.9.1, recorded in `version.txt`.
+- The ··· menu opens as a short row. Emoji and Flags are the top of that row. Each opens a picker and copies the character you choose. On a side dock the three dots turn upright.
+- `scripts/release.sh` builds that version with CMake and packs a Linux archive.
+
 ## 2026-10-28
 
 - README opens with a picture of the running dock and an open stack.

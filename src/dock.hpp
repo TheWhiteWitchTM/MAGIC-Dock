@@ -52,6 +52,8 @@ public:
     std::function<void(quint64 key)> onUnminimize;
     std::function<void(quint64 key)> onClose;
     std::function<void(quint64 key, int outputId, QRect rect)> onRect;
+    // Clipboard. The Wayland selection is set from the click that asked for the copy.
+    std::function<void(const QString &text)> onCopy;
 
 private:
     struct Item;
@@ -203,8 +205,12 @@ private:
     void layoutPopup(Screen &screen);
     void layoutPreviews(Screen &screen);
     void layoutMenu(Screen &screen);
+    void layoutOverflow(Screen &screen);
     void layoutSearch(Screen &screen);
     void layoutAbout(Screen &screen);
+    void layoutWizard(Screen &screen);
+    void openWizard(Screen &screen, const QString &kind);
+    void copyMark(Screen &screen, const QString &text);
     void setSearch(Screen &screen, bool open);
     void clickSlot(Screen &screen, const QString &uid);
     bool pollMeters();

@@ -74,7 +74,7 @@ While that stack is open, or one of its windows is picked from a preview strip, 
 
 ### Menu, cursor, and a second copy
 
-The menu has Settings, About, and Contribute, then the applet switches. Settings opens COSMIC Settings. Contribute opens the [PayPal coffee link](https://www.paypal.com/ncp/payment/4P85EQRES3RGU). About names the dock and includes the same link.
+The menu is a short row, so it covers less of the screen than a tall list. Emoji and Flags sit on the top of that row. Each one opens a picker: type a name, or click a character, and it is copied. Flags takes country codes and names, the same way Mira's flag tool does (`de`, `germany`, `france`). The rest of the row is Settings, About, Contribute, and the applet switches. On a side dock the three dots turn upright. Settings opens COSMIC Settings. Contribute opens the [PayPal coffee link](https://www.paypal.com/ncp/payment/4P85EQRES3RGU). About names the dock and includes the same link.
 
 The pointer keeps the cursor from `XCURSOR_THEME` and `XCURSOR_SIZE` while it is over the bar.
 

@@ -124,6 +124,9 @@ struct BarImpl {
     wl_data_device_manager *dataMgr = nullptr;
     wl_data_device *dataDevice = nullptr;
     int dataVersion = 0;
+    wl_data_source *clipSource = nullptr;
+    QByteArray clipText;
+    uint32_t inputSerial = 0;
     MimeOffer *drag = nullptr;
     std::vector<std::unique_ptr<MimeOffer>> offers;
     wl_data_offer *dropOffer = nullptr;
@@ -222,7 +225,13 @@ struct Shot {
     }
 };
 
-BarImpl::~BarImpl() { closeDrop(); }
+BarImpl::~BarImpl() {
+    closeDrop();
+    if (clipSource) {
+        wl_data_source_destroy(clipSource);
+        clipSource = nullptr;
+    }
+}
 
 void bufferRelease(void *data, wl_buffer *) {
     auto *buf = static_cast<Buffer *>(data);
@@ -1211,8 +1220,9 @@ void pointerMotion(void *data, wl_pointer *, uint32_t time, wl_fixed_t x, wl_fix
     impl->self->onPointer(ev);
 }
 
-void pointerButton(void *data, wl_pointer *, uint32_t, uint32_t time, uint32_t button, uint32_t state) {
+void pointerButton(void *data, wl_pointer *, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
     auto *impl = static_cast<BarImpl *>(data);
+    impl->inputSerial = serial;
     if (!impl->self->onPointer) return;
     PointerEv ev;
     ev.type = PointerEv::Type::Button;
@@ -1234,8 +1244,9 @@ void keyMap(void *, wl_keyboard *, uint32_t, int32_t fd, uint32_t) {
 }
 void keyEnter(void *, wl_keyboard *, uint32_t, wl_surface *, wl_array *) {}
 void keyLeave(void *, wl_keyboard *, uint32_t, wl_surface *) {}
-void keyKey(void *data, wl_keyboard *, uint32_t, uint32_t, uint32_t key, uint32_t state) {
+void keyKey(void *data, wl_keyboard *, uint32_t serial, uint32_t, uint32_t key, uint32_t state) {
     auto *impl = static_cast<BarImpl *>(data);
+    impl->inputSerial = serial;
     if (!impl->self->onKey) return;
     KeyEv ev;
     ev.keycode = key;
@@ -1593,4 +1604,50 @@ void Backend::setRectangle(quint64 key, int outputId, const QRect &rect) {
     if (!win || !win->cosmic || !out || !out->surface) return;
     zcosmic_toplevel_manager_v1_set_rectangle(d->manager, win->cosmic, out->surface, rect.x(), rect.y(), rect.width(),
                                               rect.height());
+}
+
+void Backend::copyText(const QString &text) {
+    if (!d || !d->dataMgr || !d->dataDevice || d->inputSerial == 0 || text.isEmpty()) return;
+    if (d->clipSource) {
+        wl_data_source_destroy(d->clipSource);
+        d->clipSource = nullptr;
+    }
+    d->clipText = text.toUtf8();
+    d->clipSource = wl_data_device_manager_create_data_source(d->dataMgr);
+    if (!d->clipSource) return;
+    static wl_data_source_listener listener{};
+    static bool init = false;
+    if (!init) {
+        listener.target = [](void *, wl_data_source *, const char *) {};
+        listener.send = [](void *data, wl_data_source *, const char *, int32_t fd) {
+            auto *impl = static_cast<BarImpl *>(data);
+            const char *bytes = impl->clipText.constData();
+            int left = impl->clipText.size();
+            while (left > 0) {
+                const ssize_t wrote = ::write(fd, bytes, static_cast<size_t>(left));
+                if (wrote < 0) {
+                    if (errno == EINTR) continue;
+                    break;
+                }
+                bytes += wrote;
+                left -= static_cast<int>(wrote);
+            }
+            ::close(fd);
+        };
+        listener.cancelled = [](void *data, wl_data_source *source) {
+            auto *impl = static_cast<BarImpl *>(data);
+            if (impl->clipSource == source) impl->clipSource = nullptr;
+            wl_data_source_destroy(source);
+        };
+        listener.dnd_drop_performed = [](void *, wl_data_source *) {};
+        listener.dnd_finished = [](void *, wl_data_source *) {};
+        listener.action = [](void *, wl_data_source *, uint32_t) {};
+        init = true;
+    }
+    wl_data_source_add_listener(d->clipSource, &listener, d);
+    wl_data_source_offer(d->clipSource, "text/plain;charset=utf-8");
+    wl_data_source_offer(d->clipSource, "text/plain");
+    wl_data_source_offer(d->clipSource, "UTF8_STRING");
+    wl_data_device_set_selection(d->dataDevice, d->clipSource, d->inputSerial);
+    wl_display_flush(d->dpy);
 }

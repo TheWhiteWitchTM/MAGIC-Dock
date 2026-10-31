@@ -84,6 +84,8 @@ public:
     void unminimize(quint64 key);
     void closeWindow(quint64 key);
     void setRectangle(quint64 key, int outputId, const QRect &rect);
+    // Puts text on the Wayland clipboard. Uses the serial from the click or key that asked.
+    void copyText(const QString &text);
 
     // Live window thumbnails for the multi-window picker. Empty when capture is unavailable.
     struct Thumbnail {

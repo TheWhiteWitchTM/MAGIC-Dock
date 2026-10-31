@@ -55,7 +55,8 @@ QT_LIBS := $(shell pkg-config --libs Qt6Widgets Qt6Gui)
 QT_RPATH := -Wl,--disable-new-dtags -Wl,-rpath,'$$ORIGIN/../lib'
 endif
 
-CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -DQT_NO_KEYWORDS -fvisibility=hidden -fvisibility-inlines-hidden -mno-direct-extern-access -I$(GEN) -Isrc $(QT_CFLAGS)
+DOCK_VERSION := $(shell sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$$//;p;q;}' version.txt)
+CXXFLAGS := -std=c++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -DQT_NO_KEYWORDS -DMAGIC_DOCK_VERSION=\"$(DOCK_VERSION)\" -fvisibility=hidden -fvisibility-inlines-hidden -mno-direct-extern-access -I$(GEN) -Isrc $(QT_CFLAGS)
 CFLAGS := -O2 -Wall -Wno-unused-parameter -I$(GEN)
 
 .PHONY: all clean preview dist test
@@ -88,15 +89,19 @@ build/settings.o: src/settings.cpp src/settings.hpp
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -c src/settings.cpp -o $@
 
-build/dock.o: src/dock.cpp src/dock.hpp src/apps.hpp src/backend.hpp src/settings.hpp
+build/dock.o: src/dock.cpp src/dock.hpp src/apps.hpp src/backend.hpp src/settings.hpp src/marks.hpp
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -c src/dock.cpp -o $@
+
+build/marks.o: src/marks.cpp src/marks.hpp src/marks_data.inc
+	@mkdir -p build
+	$(CXX) $(CXXFLAGS) -c src/marks.cpp -o $@
 
 build/main.o: src/main.cpp src/dock.hpp src/backend.hpp src/apps.hpp src/settings.hpp
 	@mkdir -p build
 	$(CXX) $(CXXFLAGS) -c src/main.cpp -o $@
 
-magic-dock: build/main.o build/dock.o build/backend.o build/apps.o build/settings.o $(GEN_OBJ)
+magic-dock: build/main.o build/dock.o build/backend.o build/apps.o build/settings.o build/marks.o $(GEN_OBJ)
 	$(CXX) -rdynamic $(QT_RPATH) -o $@ $^ $(QT_LIBS) -lwayland-client -lwayland-cursor -lpthread
 
 preview: magic-dock

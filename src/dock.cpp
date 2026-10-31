@@ -2,6 +2,8 @@
 
 #include <linux/input-event-codes.h>
 
+#include "marks.hpp"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -28,6 +30,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+QString builtMark(const QString &kind, const QString &text);
 
 namespace {
 
@@ -150,13 +154,25 @@ void drawCountBadge(QPainter &painter, const QRectF &icon, const QColor &color, 
     painter.drawText(box, Qt::AlignCenter, text);
 }
 
-void drawMoreGlyph(QPainter &painter, const QRectF &rect) {
+void drawMoreGlyph(QPainter &painter, const QRectF &rect, bool vertical) {
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(255, 255, 255, 230));
     const double s = std::min(rect.width(), rect.height());
     const double r = std::max(1.8, s * 0.055);
     const double gap = s * 0.18;
-    for (int i = -1; i <= 1; ++i) painter.drawEllipse(QPointF(rect.center().x() + i * gap, rect.center().y()), r, r);
+    for (int i = -1; i <= 1; ++i) {
+        const QPointF at = vertical ? QPointF(rect.center().x(), rect.center().y() + i * gap)
+                                    : QPointF(rect.center().x() + i * gap, rect.center().y());
+        painter.drawEllipse(at, r, r);
+    }
+}
+
+QString dockVersionText() {
+#ifdef MAGIC_DOCK_VERSION
+    return QStringLiteral(MAGIC_DOCK_VERSION);
+#else
+    return QStringLiteral("0.9.1");
+#endif
 }
 
 QString keyChar(quint32 code, bool shift) {
@@ -463,6 +479,8 @@ QString menuIconKind(const QString &action) {
     if (action == QLatin1String("about") || action == QLatin1String("note") || action == QLatin1String("drop-hint"))
         return QStringLiteral("info");
     if (action == QLatin1String("contribute")) return QStringLiteral("heart");
+    if (action == QLatin1String("emoji")) return QStringLiteral("emoji");
+    if (action == QLatin1String("flags")) return QStringLiteral("flag");
     if (action == QLatin1String("taskman")) return QStringLiteral("bars");
     if (action == QLatin1String("grok")) return QStringLiteral("ring");
     if (action == QLatin1String("restore")) return QStringLiteral("up");
@@ -540,6 +558,28 @@ void drawMenuIcon(QPainter &painter, const QRectF &box, const QString &kind, con
         painter.setBrush(Qt::NoBrush);
         painter.setPen(QPen(color, std::max(1.25, 1.45 * s), Qt::SolidLine, Qt::RoundCap));
         line(8, 7.5, 8, 11.3);
+    } else if (kind == QLatin1String("emoji")) {
+        painter.drawEllipse(at(8, 8), 5.1 * s, 5.1 * s);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(color);
+        painter.drawEllipse(at(6.1, 6.6), 0.7 * s, 0.7 * s);
+        painter.drawEllipse(at(9.9, 6.6), 0.7 * s, 0.7 * s);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(color, std::max(1.25, 1.45 * s), Qt::SolidLine, Qt::RoundCap));
+        QPainterPath smile;
+        smile.moveTo(at(5.4, 9.2));
+        smile.cubicTo(at(6.4, 11.4), at(9.6, 11.4), at(10.6, 9.2));
+        painter.drawPath(smile);
+    } else if (kind == QLatin1String("flag")) {
+        line(4.2, 13.2, 4.2, 3.2);
+        QPainterPath flag;
+        flag.moveTo(at(4.2, 3.4));
+        flag.lineTo(at(12.4, 3.4));
+        flag.lineTo(at(10.2, 6.2));
+        flag.lineTo(at(12.4, 9.0));
+        flag.lineTo(at(4.2, 9.0));
+        flag.closeSubpath();
+        painter.drawPath(flag);
     } else if (kind == QLatin1String("heart")) {
         QPainterPath heart;
         heart.moveTo(at(8, 13.2));
@@ -797,6 +837,32 @@ struct Dock::Screen {
     bool pressGrokBody = false;
     bool pressBack = false;
     bool pressManage = false;
+    // Emoji and flag wizards opened from the top of the overflow menu.
+    QString wizard;
+    QString wizardText;
+    int wizardCaret = 0;
+    int wizardPage = 0;
+    int wizardPages = 1;
+    int wizardCat = -1;
+    QString wizardBuilt;
+    QString wizardNote;
+    qint64 wizardNoteUntil = 0;
+    QRectF wizardRect;
+    QRectF wizardClose;
+    QRectF wizardField;
+    QRectF wizardBuiltRect;
+    QRectF wizardCopy;
+    std::vector<QRectF> wizardCells;
+    std::vector<QString> wizardChars;
+    std::vector<QRectF> wizardCats;
+    std::vector<int> wizardCatIds;
+    QRectF wizardPrev;
+    QRectF wizardNext;
+    int wizardHover = -1;
+    bool pressWizard = false;
+    int pressWizardType = 0;
+    int pressWizardIndex = -1;
+    QString pressWizardAction;
 };
 
 Dock::Dock(AppIndex *apps) : apps_(apps), now_(nowMs()) {
@@ -1250,6 +1316,8 @@ void Dock::dismissPopup(Screen &screen, const QString &which) {
         screen.search = false;
     } else if (which == QLatin1String("about")) {
         screen.about = false;
+    } else if (which == QLatin1String("wizard")) {
+        screen.wizard.clear();
     } else if (which == QLatin1String("meter")) {
         screen.tipDismissed = QStringLiteral("taskman");
         screen.tipUid.clear();
@@ -2086,6 +2154,58 @@ void Dock::commitRename(Screen &screen, bool apply) {
 }
 
 void Dock::applyKey(Screen &screen, int code, bool shift) {
+    if (!screen.wizard.isEmpty()) {
+        if (code == KEY_ESC) {
+            screen.wizard.clear();
+            return;
+        }
+        if (code == KEY_ENTER || code == KEY_KPENTER) {
+            copyMark(screen, screen.wizardBuilt.isEmpty() ? builtMark(screen.wizard, screen.wizardText) : screen.wizardBuilt);
+            return;
+        }
+        if (code == KEY_UP || code == KEY_PAGEUP) {
+            if (screen.wizardPage > 0) screen.wizardPage--;
+            return;
+        }
+        if (code == KEY_DOWN || code == KEY_PAGEDOWN) {
+            screen.wizardPage++;
+            return;
+        }
+        if (code == KEY_BACKSPACE) {
+            if (screen.wizardCaret > 0 && !screen.wizardText.isEmpty()) {
+                screen.wizardText.remove(screen.wizardCaret - 1, 1);
+                screen.wizardCaret--;
+                screen.wizardPage = 0;
+            }
+            return;
+        }
+        if (code == KEY_DELETE) {
+            if (screen.wizardCaret < screen.wizardText.size()) screen.wizardText.remove(screen.wizardCaret, 1);
+            return;
+        }
+        if (code == KEY_LEFT) {
+            screen.wizardCaret = std::max(0, screen.wizardCaret - 1);
+            return;
+        }
+        if (code == KEY_RIGHT) {
+            screen.wizardCaret = std::min(static_cast<int>(screen.wizardText.size()), screen.wizardCaret + 1);
+            return;
+        }
+        if (code == KEY_HOME) {
+            screen.wizardCaret = 0;
+            return;
+        }
+        if (code == KEY_END) {
+            screen.wizardCaret = screen.wizardText.size();
+            return;
+        }
+        const QString typed = keyChar(static_cast<quint32>(code), shift);
+        if (typed.isEmpty() || screen.wizardText.size() >= 64) return;
+        screen.wizardText.insert(screen.wizardCaret, typed);
+        screen.wizardCaret += typed.size();
+        screen.wizardPage = 0;
+        return;
+    }
     if (screen.search) {
         if (code == KEY_ESC) {
             screen.search = false;
@@ -2145,6 +2265,10 @@ void Dock::applyKey(Screen &screen, int code, bool shift) {
     }
     if (screen.about) {
         if (code == KEY_ESC) screen.about = false;
+        return;
+    }
+    if (code == KEY_ESC && screen.menu) {
+        screen.menu = false;
         return;
     }
     if (!screen.rename) return;
@@ -2493,6 +2617,7 @@ void Dock::setSearch(Screen &screen, bool open) {
     screen.searchRow = -1;
     screen.menu = false;
     screen.about = false;
+    screen.wizard.clear();
     screen.rename = false;
     screen.openStack.clear();
     screen.sideStack.clear();
@@ -2554,6 +2679,258 @@ void Dock::layoutAbout(Screen &screen) {
     screen.aboutCoffee = QRectF(screen.aboutRect.left() + 14, screen.aboutRect.bottom() - 50, width - 28, 36);
 }
 
+void Dock::copyMark(Screen &screen, const QString &text) {
+    if (text.isEmpty() || text == QLatin1String("?")) return;
+    if (onCopy) onCopy(text);
+    screen.wizardNote = QStringLiteral("Copied");
+    screen.wizardNoteUntil = now_ + 1400;
+}
+
+void Dock::openWizard(Screen &screen, const QString &kind) {
+    screen.menu = false;
+    screen.search = false;
+    screen.about = false;
+    screen.openStack.clear();
+    screen.sideStack.clear();
+    screen.openPreviews.clear();
+    screen.wizard = kind;
+    screen.wizardText.clear();
+    screen.wizardCaret = 0;
+    screen.wizardPage = 0;
+    screen.wizardCat = kind == QLatin1String("flags") ? 7 : -1;
+    screen.wizardBuilt.clear();
+    screen.wizardNote.clear();
+    screen.wizardNoteUntil = 0;
+    screen.wizardHover = -1;
+}
+
+QString builtMark(const QString &kind, const QString &text) {
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty()) return {};
+    if (kind == QLatin1String("flags")) {
+        QString normalized = trimmed;
+        normalized.replace(QLatin1Char(','), QLatin1Char(' '));
+        const QStringList terms = normalized.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        QString built;
+        for (const QString &term : terms) built += findFlag(term);
+        return built;
+    }
+    const QStringList parts = trimmed.split(QLatin1Char(','));
+    QString built;
+    for (const QString &part : parts) {
+        const QStringList words = part.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        built += words.isEmpty() ? QStringLiteral("?") : findEmoji(words);
+    }
+    return built;
+}
+
+void Dock::layoutOverflow(Screen &screen) {
+    screen.menuRect = QRectF();
+    screen.menuClose = QRectF();
+    screen.menuRows.assign(screen.rows.size(), QRectF());
+    screen.subRect = QRectF();
+    screen.subClose = QRectF();
+    screen.subRows.clear();
+    QFont menuFont(QStringLiteral("Fira Sans"));
+    menuFont.setPixelSize(15);
+    const QFontMetrics metrics(menuFont);
+    const QRectF room = popupRoom(screen);
+    const double pad = 10;
+    const double gap = 6;
+    const double band = 28;
+    const double maxInner = std::max(180.0, std::min(640.0, room.width()) - pad * 2);
+    auto chipWidth = [&](int index, bool top) {
+        const MenuRow &row = screen.rows[static_cast<size_t>(index)];
+        double need = metrics.horizontalAdvance(row.label) + (row.toggle ? 58.0 : 52.0);
+        need = std::clamp(need, top ? 128.0 : 104.0, 188.0);
+        return std::min(need, maxInner);
+    };
+    struct Band {
+        std::vector<int> ids;
+        bool span = false;
+        bool top = false;
+        double h = 34;
+    };
+    std::vector<Band> bands;
+    for (int i = 0; i < static_cast<int>(screen.rows.size()); ++i) {
+        const MenuRow &row = screen.rows[static_cast<size_t>(i)];
+        const bool span = row.header || row.action == QLatin1String("-");
+        const bool top = row.action == QLatin1String("emoji") || row.action == QLatin1String("flags");
+        if (span || bands.empty() || bands.back().span || bands.back().top != top) {
+            Band bandRow;
+            bandRow.span = span;
+            bandRow.top = top;
+            bandRow.h = span ? (row.action == QLatin1String("-") ? 9.0 : 22.0) : (top ? 42.0 : 34.0);
+            bands.push_back(bandRow);
+        }
+        bands.back().ids.push_back(i);
+    }
+    std::vector<Band> wrapped;
+    for (const Band &bandRow : bands) {
+        if (bandRow.span) {
+            wrapped.push_back(bandRow);
+            continue;
+        }
+        Band cur;
+        cur.top = bandRow.top;
+        cur.h = bandRow.h;
+        double used = 0;
+        for (int id : bandRow.ids) {
+            const double w = chipWidth(id, bandRow.top);
+            if (!cur.ids.empty() && used + w + gap > maxInner) {
+                wrapped.push_back(cur);
+                cur = Band();
+                cur.top = bandRow.top;
+                cur.h = bandRow.h;
+                used = 0;
+            }
+            cur.ids.push_back(id);
+            used += (used == 0.0 ? w : w + gap);
+        }
+        if (!cur.ids.empty()) wrapped.push_back(cur);
+    }
+    double contentW = 160;
+    for (const Band &bandRow : wrapped) {
+        if (bandRow.span) {
+            contentW = std::max(contentW, metrics.horizontalAdvance(screen.rows[static_cast<size_t>(bandRow.ids.front())].label) + 28.0);
+            continue;
+        }
+        double w = 0;
+        for (int id : bandRow.ids) w += chipWidth(id, bandRow.top);
+        if (bandRow.ids.size() > 1) w += gap * static_cast<double>(bandRow.ids.size() - 1);
+        contentW = std::max(contentW, w);
+    }
+    const double width = std::min(room.width(), contentW + pad * 2);
+    double height = band + 4;
+    for (const Band &bandRow : wrapped) height += bandRow.h + gap;
+    height += pad;
+    QPointF anchor(screen.pill.center());
+    for (const Slot &slot : screen.slots) {
+        if (slot.uid == QLatin1String("overflow")) anchor = slot.rect.center();
+    }
+    screen.menuRect = popupNear(screen, anchor, width, height);
+    screen.menuClose = closeBox(screen.menuRect);
+    const double inner = width - pad * 2;
+    double y = screen.menuRect.top() + band;
+    const double x0 = screen.menuRect.left() + pad;
+    for (const Band &bandRow : wrapped) {
+        if (bandRow.span) {
+            screen.menuRows[static_cast<size_t>(bandRow.ids.front())] = QRectF(x0, y, inner, bandRow.h);
+            y += bandRow.h + gap;
+            continue;
+        }
+        double rowW = 0;
+        for (int id : bandRow.ids) rowW += chipWidth(id, bandRow.top);
+        if (bandRow.ids.size() > 1) rowW += gap * static_cast<double>(bandRow.ids.size() - 1);
+        double x = x0 + std::max(0.0, (inner - rowW) / 2.0);
+        for (int id : bandRow.ids) {
+            const double w = chipWidth(id, bandRow.top);
+            screen.menuRows[static_cast<size_t>(id)] = QRectF(x, y, w, bandRow.h);
+            x += w + gap;
+        }
+        y += bandRow.h + gap;
+    }
+}
+
+void Dock::layoutWizard(Screen &screen) {
+    screen.wizardRect = QRectF();
+    screen.wizardClose = QRectF();
+    screen.wizardField = QRectF();
+    screen.wizardBuilt.clear();
+    screen.wizardBuiltRect = QRectF();
+    screen.wizardCopy = QRectF();
+    screen.wizardCells.clear();
+    screen.wizardChars.clear();
+    screen.wizardCats.clear();
+    screen.wizardCatIds.clear();
+    screen.wizardPrev = QRectF();
+    screen.wizardNext = QRectF();
+    if (screen.wizard.isEmpty()) return;
+    const bool flags = screen.wizard == QLatin1String("flags");
+    const QRectF room = popupRoom(screen);
+    const double pad = 12;
+    const double band = 28;
+    const double fieldH = 36;
+    const double cell = 36;
+    double width = std::min(520.0, std::max(280.0, room.width()));
+    const double inner = width - pad * 2;
+    const int cols = std::max(6, static_cast<int>(inner / cell));
+    double chrome = band + 8 + fieldH + 8 + 32 + pad;
+    if (!screen.wizardText.trimmed().isEmpty()) chrome += 42;
+    if (!flags) chrome += 34;
+    int gridRows = 6;
+    if (room.height() < chrome + gridRows * cell) {
+        gridRows = std::max(3, static_cast<int>((room.height() - chrome) / cell));
+    }
+    const double height = std::min(room.height(), chrome + gridRows * cell);
+    QPointF anchor(screen.pill.center());
+    for (const Slot &slot : screen.slots) {
+        if (slot.uid == QLatin1String("overflow")) anchor = slot.rect.center();
+    }
+    screen.wizardRect = popupNear(screen, anchor, width, height);
+    screen.wizardClose = closeBox(screen.wizardRect);
+    double y = screen.wizardRect.top() + band;
+    const double x = screen.wizardRect.left() + pad;
+    screen.wizardField = QRectF(x, y, inner, fieldH);
+    y += fieldH + 8;
+    screen.wizardBuilt = builtMark(screen.wizard, screen.wizardText);
+    if (!screen.wizardText.trimmed().isEmpty()) {
+        screen.wizardCopy = QRectF(x + inner - 72, y + 2, 72, 32);
+        screen.wizardBuiltRect = QRectF(x, y, inner - 80, 36);
+        y += 42;
+    }
+    if (!flags) {
+        const int cats[] = {-1, 0, 1, 2, 3, 4, 5, 6, 7};
+        const int count = 9;
+        const double chipW = inner / count;
+        for (int i = 0; i < count; ++i) {
+            screen.wizardCatIds.push_back(cats[i]);
+            screen.wizardCats.push_back(QRectF(x + i * chipW, y, chipW - 3, 28));
+        }
+        y += 34;
+    }
+    const int queryCat = flags ? 7 : screen.wizardCat;
+    QString query;
+    QStringList skinBase;
+    int skin = 0;
+    if (!screen.wizardText.trimmed().isEmpty()) {
+        QString normalized = screen.wizardText;
+        normalized.replace(QLatin1Char(','), QLatin1Char(' '));
+        const QStringList parts = normalized.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        const QString last = parts.isEmpty() ? QString() : parts.last();
+        if (flags) {
+            query = last;
+        } else {
+            const int comma = screen.wizardText.lastIndexOf(QLatin1Char(','));
+            const QString segment = comma < 0 ? screen.wizardText : screen.wizardText.mid(comma + 1);
+            const QStringList words = segment.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            skin = emojiSkin(words, &skinBase);
+            query = skinBase.join(QLatin1Char(' '));
+        }
+    }
+    const std::vector<int> hits = filterMarks(queryCat, query);
+    const int per = std::max(1, cols * gridRows);
+    const int pages = std::max(1, (static_cast<int>(hits.size()) + per - 1) / per);
+    screen.wizardPages = pages;
+    if (screen.wizardPage >= pages) screen.wizardPage = pages - 1;
+    if (screen.wizardPage < 0) screen.wizardPage = 0;
+    const int begin = screen.wizardPage * per;
+    const std::vector<Mark> &marks = allMarks();
+    for (int n = 0; n < per && begin + n < static_cast<int>(hits.size()); ++n) {
+        const int index = hits[static_cast<size_t>(begin + n)];
+        const int col = n % cols;
+        const int row = n / cols;
+        screen.wizardCells.push_back(QRectF(x + col * cell, y + row * cell, cell - 2, cell - 2));
+        const Mark &mark = marks[static_cast<size_t>(index)];
+        screen.wizardChars.push_back(flags ? mark.nativeAt(0) : mark.nativeAt(skin));
+    }
+    y += gridRows * cell + 4;
+    if (pages > 1 && y + 28 <= screen.wizardRect.bottom() - 6) {
+        screen.wizardPrev = QRectF(x, y, 72, 28);
+        screen.wizardNext = QRectF(x + inner - 72, y, 72, 28);
+    }
+}
+
 void Dock::layoutMenu(Screen &screen) {
     screen.menuRect = QRectF();
     screen.menuClose = QRectF();
@@ -2562,6 +2939,10 @@ void Dock::layoutMenu(Screen &screen) {
     screen.subClose = QRectF();
     screen.subRows.clear();
     if (!screen.menu || screen.rows.empty()) return;
+    if (screen.menuUid == QLatin1String("overflow")) {
+        layoutOverflow(screen);
+        return;
+    }
     QFont menuFont(QStringLiteral("Fira Sans"));
     menuFont.setPixelSize(15);
     const QFontMetrics menuMetrics(menuFont);
@@ -3416,6 +3797,7 @@ void Dock::relayout(Screen &screen) {
     layoutMenu(screen);
     layoutSearch(screen);
     layoutAbout(screen);
+    layoutWizard(screen);
 }
 
 Dock::Hit Dock::hitTest(const Screen &screen, double x, double y) const {
@@ -3431,11 +3813,43 @@ Dock::Hit Dock::hitTest(const Screen &screen, double x, double y) const {
     if (screen.menu && dismissHit(screen.menuClose, "menu")) return hit;
     if (screen.search && dismissHit(screen.searchClose, "search")) return hit;
     if (screen.about && dismissHit(screen.aboutClose, "about")) return hit;
+    if (!screen.wizard.isEmpty() && dismissHit(screen.wizardClose, "wizard")) return hit;
     if (screen.previews > 0.35 && dismissHit(screen.previewsClose, "previews")) return hit;
     if (!screen.meterCard.isEmpty() && dismissHit(screen.meterClose, "meter")) return hit;
     if (!screen.grokCard.isEmpty() && dismissHit(screen.grokClose, "grok")) return hit;
     if (!screen.sideStack.isEmpty() && screen.side > 0.35 && dismissHit(screen.sideClose, "side")) return hit;
     if (!screen.openStack.isEmpty() && screen.popup > 0.35 && dismissHit(screen.popupClose, "stack")) return hit;
+    if (!screen.wizard.isEmpty() && screen.wizardRect.contains(point)) {
+        for (int i = 0; i < static_cast<int>(screen.wizardCells.size()); ++i) {
+            if (!screen.wizardCells[static_cast<size_t>(i)].contains(point)) continue;
+            hit.type = 18;
+            hit.index = i;
+            return hit;
+        }
+        for (int i = 0; i < static_cast<int>(screen.wizardCats.size()); ++i) {
+            if (!screen.wizardCats[static_cast<size_t>(i)].contains(point)) continue;
+            hit.type = 20;
+            hit.index = i;
+            return hit;
+        }
+        if (screen.wizardPrev.contains(point)) {
+            hit.type = 19;
+            hit.action = QStringLiteral("prev");
+            return hit;
+        }
+        if (screen.wizardNext.contains(point)) {
+            hit.type = 19;
+            hit.action = QStringLiteral("next");
+            return hit;
+        }
+        if (screen.wizardCopy.contains(point) || screen.wizardBuiltRect.contains(point)) {
+            hit.type = 19;
+            hit.action = QStringLiteral("copy");
+            return hit;
+        }
+        hit.type = 17;
+        return hit;
+    }
     if (screen.menu && screen.subRect.contains(point) && screen.menuRow >= 0 &&
         screen.menuRow < static_cast<int>(screen.rows.size())) {
         const MenuRow &parent = screen.rows[static_cast<size_t>(screen.menuRow)];
@@ -3619,7 +4033,7 @@ Dock::Hit Dock::hitTest(const Screen &screen, double x, double y) const {
 
 void Dock::retarget(Screen &screen) {
     const bool over = magnify_ && screen.pointer && screen.hidden < 14 && screen.openStack.isEmpty() && !screen.menu &&
-                      !screen.search && !screen.about &&
+                      !screen.search && !screen.about && screen.wizard.isEmpty() &&
                       screen.pill.adjusted(-16, -28, 16, 12).contains(screen.x, screen.y);
     const double maxScale = over ? 1.45 : 1.0;
     const double sigma = iconSize_ * 0.92;
@@ -3673,12 +4087,13 @@ void Dock::updateHidden(Screen &screen) {
     const bool overBar = screen.pointer && screen.pill.adjusted(-8, -8, 8, 8).contains(screen.x, screen.y);
     const bool overCard = (!screen.meterCard.isEmpty() && screen.meterCard.contains(screen.x, screen.y)) ||
                           (!screen.grokCard.isEmpty() && screen.grokCard.contains(screen.x, screen.y));
-    const bool hold = screen.menu || screen.search || screen.about || !screen.openStack.isEmpty() ||
+    const bool hold = screen.menu || screen.search || screen.about || !screen.wizard.isEmpty() || !screen.openStack.isEmpty() ||
                       !screen.openPreviews.isEmpty() || screen.dragging || screen.fileDrag || screen.rename ||
                       (screen.pointer && screen.hidden < barH * 0.5 &&
                        (overBar || overCard || screen.popupRect.contains(screen.x, screen.y) ||
                         screen.sideRect.contains(screen.x, screen.y) || screen.previewsRect.contains(screen.x, screen.y) ||
-                        screen.searchRect.contains(screen.x, screen.y) || screen.aboutRect.contains(screen.x, screen.y)));
+                        screen.searchRect.contains(screen.x, screen.y) || screen.aboutRect.contains(screen.x, screen.y) ||
+                        screen.wizardRect.contains(screen.x, screen.y)));
     const double reach = std::max(handle_ + 4.0, 8.0);
     bool hot = false;
     if (screen.pointer) {
@@ -3737,7 +4152,7 @@ QRegion Dock::inputRegion(const Screen &screen) const {
         if (rounded.width() > 0 && rounded.height() > 0) region += rounded;
     };
     const bool tucked = screen.hidden > barThickness() * 0.62 && screen.openStack.isEmpty() && screen.openPreviews.isEmpty() &&
-                        !screen.menu && !screen.search && !screen.about;
+                        !screen.menu && !screen.search && !screen.about && screen.wizard.isEmpty();
     if (tucked) {
         const double edgeGap = screenGap();
         if (edge_ == ShellSpec::Edge::Top) add(QRectF(0, 0, screen.w, handle_ + edgeGap));
@@ -3767,6 +4182,7 @@ QRegion Dock::inputRegion(const Screen &screen) const {
     }
     if (screen.search && !screen.searchRect.isEmpty()) bridge(screen.searchRect);
     if (screen.about && !screen.aboutRect.isEmpty()) bridge(screen.aboutRect);
+    if (!screen.wizard.isEmpty() && !screen.wizardRect.isEmpty()) bridge(screen.wizardRect);
     if (!screen.meterCard.isEmpty()) add(tipZone(screen, QStringLiteral("taskman")));
     if (!screen.grokCard.isEmpty()) add(tipZone(screen, QStringLiteral("grok")));
     return region;
@@ -3804,6 +4220,7 @@ void Dock::activateApp(const QString &appId) {
 }
 
 void Dock::clickSlot(Screen &screen, const QString &uid) {
+    screen.wizard.clear();
     const Slot *slot = nullptr;
     for (const Slot &candidate : screen.slots) {
         if (candidate.uid == uid) slot = &candidate;
@@ -3934,6 +4351,7 @@ void Dock::openStackPage(Screen &screen, const QString &stackId, const QString &
 
 void Dock::openMenu(Screen &screen, const QString &uid, const QString &appId) {
     if (persist_ && (uid == QLatin1String("grok") || uid == QLatin1String("overflow"))) probeGrokTools();
+    screen.wizard.clear();
     screen.openPreviews.clear();
     screen.search = false;
     screen.about = false;
@@ -3973,6 +4391,8 @@ void Dock::openMenu(Screen &screen, const QString &uid, const QString &appId) {
         return;
     }
     if (uid == QLatin1String("overflow")) {
+        add(QStringLiteral("emoji"), QStringLiteral("Emoji"));
+        add(QStringLiteral("flags"), QStringLiteral("Flags"));
         add(QStringLiteral("settings"), QStringLiteral("Settings"));
         add(QStringLiteral("about"), QStringLiteral("About"));
         add(QStringLiteral("contribute"), QStringLiteral("Contribute"));
@@ -4136,9 +4556,13 @@ void Dock::runAction(Screen &screen, const QString &action, const QString &appId
         startClean(QStringLiteral("cosmic-app-library"));
     } else if (action == QLatin1String("search")) {
         setSearch(screen, true);
+    } else if (action == QLatin1String("emoji") || action == QLatin1String("flags")) {
+        openWizard(screen, action);
+        return;
     } else if (action == QLatin1String("settings")) {
         startClean(QStringLiteral("cosmic-settings"));
     } else if (action == QLatin1String("about")) {
+        screen.wizard.clear();
         screen.search = false;
         screen.openStack.clear();
         screen.sideStack.clear();
@@ -4494,6 +4918,10 @@ void Dock::pressAt(Screen &screen, double x, double y, bool right, bool middle) 
     screen.pressGrokPage = hit.type == 13 ? hit.index : -1;
     screen.pressGrokLaunch = hit.type == 14;
     screen.pressGrokBody = hit.type == 15;
+    screen.pressWizard = hit.type >= 17 && hit.type <= 20;
+    screen.pressWizardType = hit.type;
+    screen.pressWizardIndex = hit.index;
+    screen.pressWizardAction = hit.action;
     screen.pressDismiss = hit.type == 16;
     screen.pressDismissId = hit.type == 16 ? hit.action : QString();
     screen.pressKey = hit.key;
@@ -4550,7 +4978,24 @@ void Dock::releaseAt(Screen &screen, double x, double y) {
     } else if (screen.pressed && !dragged && screen.pressDismiss && hit.type == 16 && hit.action == screen.pressDismissId) {
         dismissPopup(screen, hit.action);
     } else if (screen.pressed && !dragged) {
-        if (screen.pressMenu && (hit.type == 3 || hit.type == 4) && hit.action == screen.pressAction &&
+        bool sameWizard = false;
+        if (hit.type == 17) sameWizard = true;
+        else if (hit.type == 18 || hit.type == 20) sameWizard = hit.index == screen.pressWizardIndex;
+        else if (hit.type == 19) sameWizard = hit.action == screen.pressWizardAction;
+        if (screen.pressWizard && hit.type == screen.pressWizardType && sameWizard) {
+            if (hit.type == 18 && hit.index >= 0 && hit.index < static_cast<int>(screen.wizardChars.size())) {
+                copyMark(screen, screen.wizardChars[static_cast<size_t>(hit.index)]);
+            } else if (hit.type == 19 && hit.action == QLatin1String("prev")) {
+                if (screen.wizardPage > 0) screen.wizardPage--;
+            } else if (hit.type == 19 && hit.action == QLatin1String("next")) {
+                screen.wizardPage++;
+            } else if (hit.type == 19 && hit.action == QLatin1String("copy")) {
+                copyMark(screen, screen.wizardBuilt);
+            } else if (hit.type == 20 && hit.index >= 0 && hit.index < static_cast<int>(screen.wizardCatIds.size())) {
+                screen.wizardCat = screen.wizardCatIds[static_cast<size_t>(hit.index)];
+                screen.wizardPage = 0;
+            }
+        } else if (screen.pressMenu && (hit.type == 3 || hit.type == 4) && hit.action == screen.pressAction &&
             hit.action != QLatin1String("add-submenu")) {
             runAction(screen, hit.action, screen.menuApp.isEmpty() ? screen.pressApp : screen.menuApp);
         } else if (!screen.pressMenu && screen.menu && hit.type != 3 && hit.type != 4) {
@@ -4571,6 +5016,7 @@ void Dock::releaseAt(Screen &screen, double x, double y) {
             if (screen.menu && hit.uid != screen.menuUid) screen.menu = false;
             if (hit.uid != QLatin1String("search")) screen.search = false;
             if (hit.uid != QLatin1String("overflow")) screen.about = false;
+            screen.wizard.clear();
             clickSlot(screen, hit.uid);
         } else if (hit.type == 12 && screen.pressManage && hit.uid == screen.pressUid) {
             const QString stackId = hit.uid.startsWith(QLatin1String("stack:")) ? hit.uid.mid(6) : screen.shownStack;
@@ -4652,6 +5098,7 @@ void Dock::releaseAt(Screen &screen, double x, double y) {
             screen.menu = false;
             screen.search = false;
             screen.about = false;
+            screen.wizard.clear();
             screen.openStack.clear();
             screen.sideStack.clear();
             screen.openPreviews.clear();
@@ -4675,6 +5122,7 @@ void Dock::releaseAt(Screen &screen, double x, double y) {
     screen.pressGrokTab = false;
     screen.pressGrokLaunch = false;
     screen.pressGrokBody = false;
+    screen.pressWizard = false;
     screen.pressGrokPage = -1;
     screen.pressDismiss = false;
     screen.pressDismissId.clear();
@@ -4732,6 +5180,7 @@ void Dock::pointer(const PointerEv &event) {
                 current.subRow = -1;
             }
         }
+        current.wizardHover = hit.type == 18 ? hit.index : -1;
         if (current.search && hit.type == 7 && !hit.appId.isEmpty()) current.searchRow = hit.index;
         current.hoverCard = (hit.type == 5 || hit.type == 6) ? hit.index : -1;
         return;
@@ -4765,7 +5214,7 @@ void Dock::key(const KeyEv &event) {
 
 bool Dock::wantsKeyboard() const {
     for (auto it = screens_.cbegin(); it != screens_.cend(); ++it) {
-        if (it.value().rename || it.value().search || it.value().about) return true;
+        if (it.value().rename || it.value().search || it.value().about || !it.value().wizard.isEmpty()) return true;
     }
     return false;
 }
@@ -4799,6 +5248,8 @@ bool Dock::tick() {
             else busy = true;
             current.scale.insert(scaleIt.key(), value);
         }
+        if (current.wizardNoteUntil > now_) busy = true;
+        else if (!current.wizardNote.isEmpty()) current.wizardNote.clear();
         current.hidden += (current.hiddenTarget - current.hidden) * 0.38;
         if (std::abs(current.hidden - current.hiddenTarget) < 0.4) current.hidden = current.hiddenTarget;
         else busy = true;
@@ -4927,7 +5378,7 @@ void Dock::paintScreen(QPainter &painter, Screen &screen) {
         const Slot &slot = screen.slots[static_cast<size_t>(i)];
         const bool hovered = screen.pointer && !screen.fileDrag && slot.hit.contains(screen.x, screen.y) && !screen.dragging &&
                              screen.openStack.isEmpty() && screen.openPreviews.isEmpty() && !screen.menu && !screen.search &&
-                             !screen.about;
+                             !screen.about && screen.wizard.isEmpty();
         if (hovered) {
             painter.setPen(Qt::NoPen);
             painter.setBrush(QColor(255, 255, 255, 24));
@@ -4953,7 +5404,7 @@ void Dock::paintScreen(QPainter &painter, Screen &screen) {
         if (slot.kind == Item::Kind::Search) {
             drawSearchGlyph(painter, slot.rect);
         } else if (slot.kind == Item::Kind::Overflow) {
-            drawMoreGlyph(painter, slot.rect);
+            drawMoreGlyph(painter, slot.rect, !horizontal());
         } else if (slot.kind == Item::Kind::TaskManager) {
             drawUsageBars(painter, slot.rect, cpu_, mem_, cpuReady_, memTotal_ > 0);
         } else if (slot.kind == Item::Kind::Grok) {
@@ -5407,7 +5858,7 @@ void Dock::paintScreen(QPainter &painter, Screen &screen) {
         painter.setFont(title);
         painter.setPen(QColor(255, 255, 255, 235));
         painter.drawText(QRectF(screen.aboutRect.left() + 18, screen.aboutRect.top() + 16, screen.aboutRect.width() - 56, 28),
-                         Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("MAGIC Dock"));
+                         Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("MAGIC Dock %1").arg(dockVersionText()));
         QFont body(QStringLiteral("Fira Sans"));
         body.setPixelSize(15);
         painter.setFont(body);
@@ -5428,6 +5879,109 @@ void Dock::paintScreen(QPainter &painter, Screen &screen) {
         painter.restore();
     }
 
+    if (!screen.wizard.isEmpty() && !screen.wizardRect.isEmpty()) {
+        painter.save();
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 70));
+        painter.drawRoundedRect(screen.wizardRect.translated(0, 4).adjusted(2, 0, -2, 2), kPopupRadius, kPopupRadius);
+        painter.setBrush(QColor(28, 29, 34, 242));
+        painter.drawRoundedRect(screen.wizardRect, kPopupRadius, kPopupRadius);
+        QFont title(QStringLiteral("Fira Sans"));
+        title.setPixelSize(16);
+        title.setWeight(QFont::DemiBold);
+        painter.setFont(title);
+        painter.setPen(QColor(255, 255, 255, 235));
+        const QString heading = screen.wizard == QLatin1String("flags") ? QStringLiteral("Flags") : QStringLiteral("Emoji");
+        painter.drawText(QRectF(screen.wizardRect.left() + 16, screen.wizardRect.top() + 6, screen.wizardRect.width() - 56, 24),
+                         Qt::AlignLeft | Qt::AlignVCenter, heading);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(255, 255, 255, 16));
+        painter.drawRoundedRect(screen.wizardField, 8, 8);
+        QFont body(QStringLiteral("Fira Sans"));
+        body.setPixelSize(15);
+        painter.setFont(body);
+        const QFontMetrics bodyMetrics(body);
+        const bool flags = screen.wizard == QLatin1String("flags");
+        const QString placeholder = flags ? QStringLiteral("germany france eu") : QStringLiteral("frog, sparkle");
+        const QString shown = screen.wizardText.isEmpty() ? placeholder : screen.wizardText;
+        painter.setPen(screen.wizardText.isEmpty() ? QColor(255, 255, 255, 110) : QColor(255, 255, 255, 235));
+        painter.drawText(screen.wizardField.adjusted(10, 0, -10, 0), Qt::AlignVCenter | Qt::AlignLeft, shown);
+        if (!screen.wizardText.isEmpty() && (now_ / 500) % 2 == 0) {
+            const int caret = std::clamp(screen.wizardCaret, 0, static_cast<int>(screen.wizardText.size()));
+            const double advance = bodyMetrics.horizontalAdvance(screen.wizardText.left(caret));
+            const double cx = screen.wizardField.left() + 10 + advance;
+            painter.setPen(QPen(Qt::white, 1));
+            painter.drawLine(QPointF(cx, screen.wizardField.top() + 8), QPointF(cx, screen.wizardField.bottom() - 8));
+        }
+        if (!screen.wizardBuiltRect.isEmpty()) {
+            QFont markFont;
+            markFont.setFamilies({QStringLiteral("Noto Color Emoji"), QStringLiteral("Noto Emoji")});
+            markFont.setPixelSize(22);
+            painter.setFont(markFont);
+            painter.setPen(QColor(255, 255, 255, 240));
+            painter.drawText(screen.wizardBuiltRect.adjusted(4, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, screen.wizardBuilt);
+            const bool copyHot = screen.pointer && screen.wizardCopy.contains(screen.x, screen.y);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(copyHot ? QColor(255, 255, 255, 32) : QColor(255, 255, 255, 14));
+            painter.drawRoundedRect(screen.wizardCopy, 8, 8);
+            painter.setFont(body);
+            painter.setPen(QColor(255, 255, 255, 230));
+            const QString copyLabel = now_ < screen.wizardNoteUntil ? screen.wizardNote : QStringLiteral("Copy");
+            painter.drawText(screen.wizardCopy, Qt::AlignCenter, copyLabel);
+        }
+        QFont chipFont(QStringLiteral("Fira Sans"));
+        chipFont.setPixelSize(11);
+        painter.setFont(chipFont);
+        for (int i = 0; i < static_cast<int>(screen.wizardCats.size()) && i < static_cast<int>(screen.wizardCatIds.size()); ++i) {
+            const QRectF chip = screen.wizardCats[static_cast<size_t>(i)];
+            const bool on = screen.wizardCatIds[static_cast<size_t>(i)] == screen.wizardCat;
+            const bool hot = screen.pointer && chip.contains(screen.x, screen.y);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(on ? QColor(255, 255, 255, 36) : (hot ? QColor(255, 255, 255, 18) : QColor(255, 255, 255, 8)));
+            painter.drawRoundedRect(chip, 6, 6);
+            painter.setPen(QColor(255, 255, 255, on ? 240 : 170));
+            painter.drawText(chip, Qt::AlignCenter, markCategory(screen.wizardCatIds[static_cast<size_t>(i)]));
+        }
+        QFont emojiFont;
+        emojiFont.setFamilies({QStringLiteral("Noto Color Emoji"), QStringLiteral("Noto Emoji")});
+        emojiFont.setPixelSize(20);
+        for (int i = 0; i < static_cast<int>(screen.wizardCells.size()); ++i) {
+            const QRectF cell = screen.wizardCells[static_cast<size_t>(i)];
+            const bool hot = i == screen.wizardHover || (screen.pointer && cell.contains(screen.x, screen.y));
+            if (hot) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(255, 255, 255, 28));
+                painter.drawRoundedRect(cell, 8, 8);
+            }
+            painter.setFont(emojiFont);
+            painter.setPen(Qt::white);
+            painter.drawText(cell, Qt::AlignCenter, screen.wizardChars[static_cast<size_t>(i)]);
+        }
+        auto pageChip = [&](const QRectF &rect, const QString &label) {
+            if (rect.isEmpty()) return;
+            const bool hot = screen.pointer && rect.contains(screen.x, screen.y);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(hot ? QColor(255, 255, 255, 32) : QColor(255, 255, 255, 12));
+            painter.drawRoundedRect(rect, 7, 7);
+            painter.setFont(body);
+            painter.setPen(QColor(255, 255, 255, 220));
+            painter.drawText(rect, Qt::AlignCenter, label);
+        };
+        pageChip(screen.wizardPrev, QStringLiteral("Prev"));
+        pageChip(screen.wizardNext, QStringLiteral("Next"));
+        if (!screen.wizardPrev.isEmpty()) {
+            painter.setFont(body);
+            painter.setPen(QColor(255, 255, 255, 160));
+            const QString page = QStringLiteral("%1 / %2").arg(screen.wizardPage + 1).arg(screen.wizardPages);
+            painter.drawText(QRectF(screen.wizardPrev.right(), screen.wizardPrev.top(),
+                                    screen.wizardNext.left() - screen.wizardPrev.right(), screen.wizardPrev.height()),
+                             Qt::AlignCenter, page);
+        }
+        frame(screen.wizardRect, kPopupRadius);
+        dismiss(screen.wizardClose);
+        painter.restore();
+    }
+
     screen.meterCard = QRectF();
     screen.meterClose = QRectF();
     screen.grokCard = QRectF();
@@ -5435,7 +5989,8 @@ void Dock::paintScreen(QPainter &painter, Screen &screen) {
     screen.grokTabGrok = QRectF();
     screen.grokTabBots = QRectF();
     screen.grokLaunch = QRectF();
-    if (!screen.menu && !screen.search && !screen.about && screen.openStack.isEmpty() && screen.openPreviews.isEmpty() &&
+    if (!screen.menu && !screen.search && !screen.about && screen.wizard.isEmpty() && screen.openStack.isEmpty() &&
+        screen.openPreviews.isEmpty() &&
         !screen.tipUid.isEmpty() && now_ - screen.tipSince > 280) {
         const Slot *slot = nullptr;
         for (const Slot &candidate : screen.slots)
@@ -6242,15 +6797,28 @@ int Dock::selfTest() {
     bool sawSettings = false;
     bool sawAbout = false;
     bool sawContribute = false;
-    for (const MenuRow &row : menuScreen.rows) {
+    int emojiAt = -1;
+    int flagsAt = -1;
+    for (int i = 0; i < static_cast<int>(menuScreen.rows.size()); ++i) {
+        const MenuRow &row = menuScreen.rows[static_cast<size_t>(i)];
         if (row.action == QLatin1String("settings")) sawSettings = true;
         if (row.action == QLatin1String("about")) sawAbout = true;
         if (row.action == QLatin1String("contribute")) sawContribute = true;
+        if (row.action == QLatin1String("emoji")) emojiAt = i;
+        if (row.action == QLatin1String("flags")) flagsAt = i;
+    }
+    const QString frog = QString::fromUtf8("🐸");
+    const QString germany = QString::fromUtf8("🇩🇪");
+    if (findEmoji({QStringLiteral("frog")}) != frog || findFlag(QStringLiteral("de")) != germany ||
+        findFlag(QStringLiteral("germany")) != germany || findFlag(QStringLiteral("no-such-place")) != QLatin1String("?")) {
+        std::fprintf(stderr, "magic-dock: emoji or flag search failed\n");
+        return 1;
     }
     setSearch(menuScreen, true);
     applyKey(menuScreen, KEY_T, false);
     applyKey(menuScreen, KEY_E, false);
-    if (!sawSettings || !sawAbout || !sawContribute || menuScreen.searchText != QLatin1String("te") || !wantsKeyboard()) {
+    if (!sawSettings || !sawAbout || !sawContribute || emojiAt != 0 || flagsAt != 1 ||
+        menuScreen.searchText != QLatin1String("te") || !wantsKeyboard()) {
         std::fprintf(stderr, "magic-dock: menu or search self-test failed\n");
         return 1;
     }
@@ -7481,6 +8049,47 @@ int Dock::selfTest() {
         std::fprintf(stderr, "magic-dock: menu close button did not close it\n");
         return 1;
     }
+    openMenu(screen(1), QStringLiteral("overflow"), {});
+    relayout(screen(1));
+    if (screen(1).menuRect.isEmpty() || screen(1).menuRect.width() + 8 < screen(1).menuRect.height()) {
+        std::fprintf(stderr, "magic-dock: overflow menu is not a short row (%.0fx%.0f)\n", screen(1).menuRect.width(),
+                     screen(1).menuRect.height());
+        return 1;
+    }
+    if (screen(1).menuRows.size() < 2 || screen(1).menuRows[0].top() > screen(1).menuRows[1].top() + 1 ||
+        screen(1).menuRows[0].right() > screen(1).menuRows[1].left()) {
+        std::fprintf(stderr, "magic-dock: emoji and flags are not the top row of the menu\n");
+        return 1;
+    }
+    openWizard(screen(1), QStringLiteral("emoji"));
+    screen(1).wizardText = QStringLiteral("frog");
+    screen(1).wizardCaret = 4;
+    relayout(screen(1));
+    bool sawFrog = false;
+    for (const QString &mark : screen(1).wizardChars)
+        if (mark == frog) sawFrog = true;
+    if (screen(1).wizardRect.isEmpty() || screen(1).wizardCells.size() < 1 || !sawFrog || screen(1).wizardBuilt != frog) {
+        std::fprintf(stderr, "magic-dock: emoji wizard did not find a frog\n");
+        return 1;
+    }
+    QString copied;
+    onCopy = [&](const QString &text) { copied = text; };
+    copyMark(screen(1), screen(1).wizardBuilt);
+    if (copied != frog) {
+        std::fprintf(stderr, "magic-dock: emoji copy did not leave the wizard\n");
+        onCopy = nullptr;
+        return 1;
+    }
+    onCopy = nullptr;
+    openWizard(screen(1), QStringLiteral("flags"));
+    screen(1).wizardText = QStringLiteral("germany france");
+    relayout(screen(1));
+    const QString france = QString::fromUtf8("🇫🇷");
+    if (screen(1).wizardBuilt != germany + france || screen(1).wizardCells.empty()) {
+        std::fprintf(stderr, "magic-dock: flag wizard did not build germany and france\n");
+        return 1;
+    }
+    screen(1).wizard.clear();
 
     // An open stack keeps the accent ring and the window count on its dock
     // icon, lists every open window (including a nested stack and a Qt app

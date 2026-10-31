@@ -110,6 +110,7 @@ int main(int argc, char **argv) {
     dock.onUnminimize = [&backend](quint64 key) { backend.unminimize(key); };
     dock.onClose = [&backend](quint64 key) { backend.closeWindow(key); };
     dock.onRect = [&backend](quint64 key, int outputId, QRect rect) { backend.setRectangle(key, outputId, rect); };
+    dock.onCopy = [&backend](const QString &text) { backend.copyText(text); };
     backend.onThumbnails = [&dock, &backend]() {
         for (quint64 key : dock.previewKeys()) {
             const Backend::Thumbnail thumb = backend.thumbnail(key);

@@ -233,6 +233,16 @@ The script is the same one the prebuilt bundle uses. It links `~/.local/bin/magi
 
 The session log is `~/.config/magic-dock/session.log`.
 
+### CMake
+
+`scripts/release.sh` is the release build. It reads `version.txt`, configures with CMake, runs the self-test, and writes `release/magic-dock-<version>-linux-x86_64.tar.gz`. Qt is taken from `QT_PREFIX`, or from `$HOME/Qt/6.12.0/gcc_64`.
+
+```bash
+./scripts/release.sh
+```
+
+`make` remains the everyday build. The two compile the same sources.
+
 ### 6. Build a bundle you can copy to another machine
 
 ```bash

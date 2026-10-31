@@ -1,5 +1,7 @@
 build/
+build-linux/
 dist/
+release/
 magic-dock
 cosmic-bar
 a.out
