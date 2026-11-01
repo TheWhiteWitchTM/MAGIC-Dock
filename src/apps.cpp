@@ -12,6 +12,7 @@
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QThread>
+#include <QUrl>
 
 #include <algorithm>
 #include <cstdio>
@@ -72,20 +73,75 @@ QStringList iconSearchRoots(const QString &extra) {
 }
 
 QString webToken(const QString &text) {
-    static const QRegularExpression re(QStringLiteral("(?:chrome|chromium|msedge|brave|crx)[_-]([a-z]{16,32})"));
+    // Chrome extension ids are 32 characters of a-p. A wider match treats the
+    // start of a hostname, such as thewhitewitchtm, as an app id.
+    static const QRegularExpression re(QStringLiteral("(?:chrome|chromium|msedge|brave|crx)[_-]([a-p]{32})"));
     const auto match = re.match(text.toLower());
     if (!match.hasMatch()) return {};
     return match.captured(1);
+}
+
+// A site opened with --app=URL gets a window id of
+// chrome-<host>_<path>-<profile>, with / and spaces turned into underscores.
+// https://thewhitewitchtm.github.io/LibreSky/ in Profile 1 is
+// chrome-thewhitewitchtm.github.io__LibreSky_-Profile_1.
+QString chromeUrlWindowId(const QStringList &args) {
+    QString urlText;
+    QString profile = QStringLiteral("Default");
+    QString browser = QStringLiteral("chrome");
+    for (int i = 0; i < args.size(); ++i) {
+        const QString &arg = args.at(i);
+        const QString lower = arg.toLower();
+        if (lower.contains(QLatin1String("chromium"))) browser = QStringLiteral("chromium");
+        if (arg.startsWith(QLatin1String("--app="))) urlText = arg.mid(6);
+        else if (arg == QLatin1String("--app") && i + 1 < args.size()) urlText = args.at(i + 1);
+        else if (arg.startsWith(QLatin1String("--profile-directory="))) profile = arg.mid(QStringLiteral("--profile-directory=").size());
+        else if (arg == QLatin1String("--profile-directory") && i + 1 < args.size()) profile = args.at(i + 1);
+    }
+    if (!urlText.startsWith(QLatin1String("https://")) && !urlText.startsWith(QLatin1String("http://"))) return {};
+    const QUrl url(urlText);
+    if (!url.isValid() || url.host().isEmpty()) return {};
+    QString path = url.path();
+    if (path.isEmpty()) path = QStringLiteral("/");
+    QString slug = url.host() + QLatin1Char('_') + path;
+    for (QChar &c : slug) {
+        if (c == QLatin1Char('/') || c == QLatin1Char(' ') || c == QLatin1Char('\n') || c == QLatin1Char('\r'))
+            c = QLatin1Char('_');
+    }
+    profile.replace(QLatin1Char(' '), QLatin1Char('_'));
+    if (profile.isEmpty()) profile = QStringLiteral("Default");
+    return browser + QLatin1Char('-') + slug + QLatin1Char('-') + profile;
+}
+
+bool flextopId(const QString &id) { return id.contains(QLatin1String(".flextop.")); }
+
+void claimAlias(QHash<QString, QString> &map, const QString &key, const QString &appId) {
+    if (key.isEmpty() || appId.isEmpty()) return;
+    auto it = map.find(key);
+    if (it == map.end()) {
+        map.insert(key, appId);
+        return;
+    }
+    // Flatpak's flextop copy of a Chrome shortcut repeats the same app id and
+    // often points the icon at a file that is not there. Keep the real shortcut.
+    if (!flextopId(appId) && flextopId(it.value())) it.value() = appId;
 }
 
 QString chromeProfileIcon(const QString &name) {
     const QString token = webToken(name);
     if (token.isEmpty()) return {};
     const QString home = QDir::homePath();
+    // Flatpak Chrome keeps the installed web-app icons in its own config tree,
+    // not under ~/.config. A host hicolor copy can be missing after a shortcut
+    // install fails, and the profile copy is the one Chrome itself painted.
     const QStringList profiles = {home + QStringLiteral("/.config/google-chrome"),
+                                  home + QStringLiteral("/.var/app/com.google.Chrome/config/google-chrome"),
                                   home + QStringLiteral("/.config/chromium"),
+                                  home + QStringLiteral("/.var/app/org.chromium.Chromium/config/chromium"),
                                   home + QStringLiteral("/.config/BraveSoftware/Brave-Browser"),
-                                  home + QStringLiteral("/.config/microsoft-edge")};
+                                  home + QStringLiteral("/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"),
+                                  home + QStringLiteral("/.config/microsoft-edge"),
+                                  home + QStringLiteral("/.var/app/com.microsoft.Edge/config/microsoft-edge")};
     QString best;
     int bestArea = 0;
     for (const QString &profile : profiles) {
@@ -242,6 +298,7 @@ void AppIndex::scan(const QStringList &extraDirs) {
     byClass_.clear();
     byExec_.clear();
     byWeb_.clear();
+    byUrl_.clear();
     iconCache_.clear();
     iconFileCache_.clear();
     extraDirs_ = extraDirs;
@@ -393,16 +450,19 @@ void AppIndex::parseDesktop(const QString &filePath) {
     apps_.insert(app.id, app);
     if (!lower_.contains(app.id.toLower())) lower_.insert(app.id.toLower(), app.id);
     const QString wm = app.wmClass.toLower();
-    if (!wm.isEmpty() && !byClass_.contains(wm)) byClass_.insert(wm, app.id);
+    claimAlias(byClass_, wm, app.id);
     const QStringList argv = splitExec(app.exec, &app);
     if (!argv.isEmpty()) {
         const QString base = QFileInfo(argv.first()).fileName().toLower();
         if (!base.isEmpty() && !byExec_.contains(base)) byExec_.insert(base, app.id);
     }
-    const QString fromId = webToken(app.id);
-    const QString fromClass = webToken(app.wmClass);
-    if (!fromId.isEmpty() && !byWeb_.contains(fromId)) byWeb_.insert(fromId, app.id);
-    if (!fromClass.isEmpty() && !byWeb_.contains(fromClass)) byWeb_.insert(fromClass, app.id);
+    claimAlias(byWeb_, webToken(app.id), app.id);
+    claimAlias(byWeb_, webToken(app.wmClass), app.id);
+    const QString urlWindow = chromeUrlWindowId(argv);
+    if (!urlWindow.isEmpty()) {
+        claimAlias(byUrl_, urlWindow, app.id);
+        claimAlias(byUrl_, urlWindow.toLower(), app.id);
+    }
 }
 
 const DesktopApp *AppIndex::byId(const QString &id) const {
@@ -421,6 +481,8 @@ QString AppIndex::resolve(const QString &appId) const {
     if (byClass_.contains(lower)) return byClass_.value(lower);
     const QString token = webToken(lower);
     if (!token.isEmpty() && byWeb_.contains(token)) return byWeb_.value(token);
+    if (byUrl_.contains(id)) return byUrl_.value(id);
+    if (byUrl_.contains(lower)) return byUrl_.value(lower);
     if (lower == QLatin1String("google-chrome") || lower == QLatin1String("chrome")) {
         if (apps_.contains(QLatin1String("com.google.Chrome"))) return QStringLiteral("com.google.Chrome");
         if (apps_.contains(QLatin1String("google-chrome"))) return QStringLiteral("google-chrome");
@@ -556,16 +618,51 @@ QPixmap AppIndex::iconFor(const QString &desktopId, int devicePx) const {
 }
 
 QStringList splitExec(const QString &exec, const DesktopApp *app) {
+    // Desktop files use double quotes. Flatpak Chrome's flextop rewriter uses
+    // GLib shell quotes (single quotes) around every argument, including a
+    // profile name that contains a space. Both forms have to come apart the
+    // same way, or the dock starts Chrome with the quote marks still attached
+    // and Chrome opens a plain window instead of the installed web app.
     QStringList tokens;
     QString cur;
-    bool quote = false;
+    bool single = false;
+    bool dbl = false;
     for (int i = 0; i < exec.size(); ++i) {
         const QChar c = exec[i];
-        if (c == '"') {
-            quote = !quote;
+        if (single) {
+            if (c == '\'') single = false;
+            else cur += c;
             continue;
         }
-        if (!quote && c.isSpace()) {
+        if (dbl) {
+            if (c == '"') {
+                dbl = false;
+                continue;
+            }
+            if (c == '\\' && i + 1 < exec.size()) {
+                const QChar n = exec[i + 1];
+                if (n == '"' || n == '\\' || n == '$' || n == '`') {
+                    cur += n;
+                    ++i;
+                    continue;
+                }
+            }
+            cur += c;
+            continue;
+        }
+        if (c == '\'') {
+            single = true;
+            continue;
+        }
+        if (c == '"') {
+            dbl = true;
+            continue;
+        }
+        if (c == '\\' && i + 1 < exec.size()) {
+            cur += exec[++i];
+            continue;
+        }
+        if (c.isSpace()) {
             if (!cur.isEmpty()) {
                 tokens << cur;
                 cur.clear();
@@ -738,6 +835,26 @@ int runAppsSelfTest() {
         std::fprintf(stderr, "magic-dock: could not write the web-app icon fixture\n");
         return 1;
     }
+    QFile flextop(apps + QStringLiteral("/com.google.Chrome.flextop.chrome-ccefomliadfhpncngnfondhmfofjnnii-Profile_1.desktop"));
+    if (!flextop.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+    flextop.write("[Desktop Entry]\n"
+                  "Type=Application\n"
+                  "Name=LibreSky Copy\n"
+                  "Exec=flatpak 'run' '--command=/app/bin/chrome' 'com.google.Chrome' "
+                  "'--profile-directory=Profile 1' '--app-id=ccefomliadfhpncngnfondhmfofjnnii'\n"
+                  "Icon=/no/such/chrome-icon.png\n"
+                  "StartupWMClass=crx_ccefomliadfhpncngnfondhmfofjnnii\n");
+    flextop.close();
+    QFile sky(apps + QStringLiteral("/chrome-ccefomliadfhpncngnfondhmfofjnnii-Profile_1.desktop"));
+    if (!sky.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
+    sky.write("[Desktop Entry]\n"
+              "Type=Application\n"
+              "Name=LibreSky\n"
+              "Exec=/usr/bin/flatpak run --command=/app/bin/chrome com.google.Chrome "
+              "--profile-directory=\"Profile 1\" --app=https://thewhitewitchtm.github.io/LibreSky/\n"
+              "Icon=chrome-abcdefghijklmnop-Default\n"
+              "StartupWMClass=crx_ccefomliadfhpncngnfondhmfofjnnii\n");
+    sky.close();
     QFile desktop(apps + QStringLiteral("/chrome-abcdefghijklmnop-Default.desktop"));
     if (!desktop.open(QIODevice::WriteOnly | QIODevice::Truncate)) return 1;
     desktop.write("[Desktop Entry]\n"
@@ -814,13 +931,20 @@ int runAppsSelfTest() {
     const bool dirOk = QDir(launchedHome) == QDir::home() && QDir(launchedKept) == QDir(QDir::tempPath()) &&
                        termArgs.size() == 2 && termArgs.at(0) == QLatin1String("--working-directory") &&
                        QDir(termArgs.at(1)) == QDir::home() && plainArgs.size() == 1 && keptFlag.size() == 2;
+    const QString skyId = QStringLiteral("chrome-ccefomliadfhpncngnfondhmfofjnnii-Profile_1");
+    const QString skyWin = QStringLiteral("chrome-thewhitewitchtm.github.io__LibreSky_-Profile_1");
+    const QString skyResolved = index.resolve(skyWin);
+    const QString skyCrx = index.resolve(QStringLiteral("crx_ccefomliadfhpncngnfondhmfofjnnii"));
+    const QPixmap skyIcon = index.iconFor(skyResolved, 16);
     if (web != QLatin1String("chrome-abcdefghijklmnop-Default") || qt != QLatin1String("cinder") || webIcon.isNull() ||
+        skyResolved != skyId || skyCrx != skyId || skyIcon.isNull() ||
         qtIcon.isNull() || !envOk || !dirOk || !fellThrough || !markerOk || foundTrue.isEmpty() ||
         !missingName.isEmpty()) {
         std::fprintf(stderr,
-                     "magic-dock: apps self-test failed (web=%s qt=%s webIcon=%d qtIcon=%d plugins=%s dir=%d "
-                     "launch=%d marker=%d true=%s missing=%s)\n",
+                     "magic-dock: apps self-test failed (web=%s qt=%s webIcon=%d qtIcon=%d sky=%s crx=%s skyIcon=%d "
+                     "plugins=%s dir=%d launch=%d marker=%d true=%s missing=%s)\n",
                      qPrintable(web), qPrintable(qt), webIcon.isNull() ? 0 : 1, qtIcon.isNull() ? 0 : 1,
+                     qPrintable(skyResolved), qPrintable(skyCrx), skyIcon.isNull() ? 0 : 1,
                      qPrintable(env.value(QStringLiteral("QT_PLUGIN_PATH"))), dirOk ? 1 : 0, fellThrough ? 1 : 0,
                      markerOk ? 1 : 0, qPrintable(foundTrue), qPrintable(missingName));
         return 1;
@@ -828,6 +952,19 @@ int runAppsSelfTest() {
     const QStringList args = splitExec(QStringLiteral("/usr/bin/true %F %U"), nullptr);
     if (args.size() != 1 || args.at(0) != QLatin1String("/usr/bin/true")) {
         std::fprintf(stderr, "magic-dock: exec field codes parsed wrong\n");
+        return 1;
+    }
+    const QStringList chromeArgs = splitExec(
+        QStringLiteral("flatpak 'run' '--command=/app/bin/chrome' 'com.google.Chrome' "
+                       "'--profile-directory=Profile 1' '--app-id=ccefomliadfhpncngnfondhmfofjnnii'"),
+        nullptr);
+    const QStringList quotedArgs =
+        splitExec(QStringLiteral("/usr/bin/flatpak run --profile-directory=\"Profile 1\" --app-id=abc"), nullptr);
+    if (chromeArgs.size() != 6 || chromeArgs.at(0) != QLatin1String("flatpak") || chromeArgs.at(1) != QLatin1String("run") ||
+        chromeArgs.at(4) != QLatin1String("--profile-directory=Profile 1") ||
+        chromeArgs.at(5) != QLatin1String("--app-id=ccefomliadfhpncngnfondhmfofjnnii") || quotedArgs.size() != 4 ||
+        quotedArgs.at(3) != QLatin1String("--app-id=abc")) {
+        std::fprintf(stderr, "magic-dock: chrome exec quotes parsed wrong (%s)\n", qPrintable(chromeArgs.join(QLatin1Char('|'))));
         return 1;
     }
     std::fprintf(stderr, "magic-dock: apps self-test ok\n");

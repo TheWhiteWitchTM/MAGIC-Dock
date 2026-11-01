@@ -74,7 +74,7 @@ While that stack is open, or one of its windows is picked from a preview strip, 
 
 ### Menu, cursor, and a second copy
 
-The menu is a short row, so it covers less of the screen than a tall list. Emoji and Flags sit on the top of that row. Each one opens a picker: type a name, or click a character, and it is copied. Flags takes country codes and names, the same way Mira's flag tool does (`de`, `germany`, `france`). The rest of the row is Settings, About, Contribute, and the applet switches. On a side dock the three dots turn upright. Settings opens COSMIC Settings. Contribute opens the [PayPal coffee link](https://www.paypal.com/ncp/payment/4P85EQRES3RGU). About names the dock and includes the same link.
+The menu is a vertical list. Emoji and Flags are at the top. Each one opens a picker: type a name, or click a character, and it is copied. Flags takes country codes and names, the same way Mira's flag tool does (`de`, `germany`, `france`). Under those are Settings, About, and Contribute, then the applet switches. The three dots stand upright. Settings opens COSMIC Settings. Contribute opens the [PayPal coffee link](https://www.paypal.com/ncp/payment/4P85EQRES3RGU). About names the dock and includes the same link. Trash, Grok, and System Monitor stay on the dock. The switches only show or hide them.
 
 The pointer keeps the cursor from `XCURSOR_THEME` and `XCURSOR_SIZE` while it is over the bar.
 
@@ -122,7 +122,7 @@ Qt on Wayland reports an app id of reversed organization domain plus the executa
 
 ## Web app icons
 
-Chrome, Chromium, Brave, and Edge install a web app icon as a file under `~/.local/share/icons/hicolor/<size>/apps/`, named like `chrome-<id>-Default.png`. The same files are read from Flatpak browser data under `~/.var/app/`. The dock reads those files directly and notices a new applications directory or hicolor directory, so a new web app does not wait on `gtk-update-icon-cache`. A window whose app id is `crx_<id>` is matched to that desktop file.
+Chrome, Chromium, Brave, and Edge install a web app icon as a file under `~/.local/share/icons/hicolor/<size>/apps/`, named like `chrome-<id>-Default.png`. The same files are read from Flatpak browser data under `~/.var/app/`, and from the browser profile's web-app icon folder when that copy is the only one left. The dock reads those files directly and notices a new applications directory or hicolor directory, so a new web app does not wait on `gtk-update-icon-cache`. A window whose app id is `crx_<id>` or `chrome-<id>-<profile>` is matched to that desktop file. Flatpak Chrome writes the launch line with single quotes. The dock accepts that quoting, so the profile name stays one argument.
 
 ## Layout of the source
 

@@ -4,8 +4,9 @@ Dates are the days the changes landed on `main`. The prebuilt files live on the 
 
 ## 2026-10-31
 
+- A Flatpak Chrome web app whose desktop line is wrapped in single quotes opens that app. The profile name keeps its space. Icons for those apps are also read from the browser's own profile when the hicolor copy is missing.
 - Version 0.9.1, recorded in `version.txt`.
-- The ··· menu opens as a short row. Emoji and Flags are the top of that row. Each opens a picker and copies the character you choose. On a side dock the three dots turn upright.
+- The ··· menu is a vertical list. Emoji and Flags are at the top, then Settings, About, Contribute, and the applet switches. The three dots stand upright. Grok and System Monitor stay on the dock.
 - `scripts/release.sh` builds that version with CMake and packs a Linux archive.
 
 ## 2026-10-28

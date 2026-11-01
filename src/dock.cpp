@@ -2724,114 +2724,6 @@ QString builtMark(const QString &kind, const QString &text) {
     return built;
 }
 
-void Dock::layoutOverflow(Screen &screen) {
-    screen.menuRect = QRectF();
-    screen.menuClose = QRectF();
-    screen.menuRows.assign(screen.rows.size(), QRectF());
-    screen.subRect = QRectF();
-    screen.subClose = QRectF();
-    screen.subRows.clear();
-    QFont menuFont(QStringLiteral("Fira Sans"));
-    menuFont.setPixelSize(15);
-    const QFontMetrics metrics(menuFont);
-    const QRectF room = popupRoom(screen);
-    const double pad = 10;
-    const double gap = 6;
-    const double band = 28;
-    const double maxInner = std::max(180.0, std::min(640.0, room.width()) - pad * 2);
-    auto chipWidth = [&](int index, bool top) {
-        const MenuRow &row = screen.rows[static_cast<size_t>(index)];
-        double need = metrics.horizontalAdvance(row.label) + (row.toggle ? 58.0 : 52.0);
-        need = std::clamp(need, top ? 128.0 : 104.0, 188.0);
-        return std::min(need, maxInner);
-    };
-    struct Band {
-        std::vector<int> ids;
-        bool span = false;
-        bool top = false;
-        double h = 34;
-    };
-    std::vector<Band> bands;
-    for (int i = 0; i < static_cast<int>(screen.rows.size()); ++i) {
-        const MenuRow &row = screen.rows[static_cast<size_t>(i)];
-        const bool span = row.header || row.action == QLatin1String("-");
-        const bool top = row.action == QLatin1String("emoji") || row.action == QLatin1String("flags");
-        if (span || bands.empty() || bands.back().span || bands.back().top != top) {
-            Band bandRow;
-            bandRow.span = span;
-            bandRow.top = top;
-            bandRow.h = span ? (row.action == QLatin1String("-") ? 9.0 : 22.0) : (top ? 42.0 : 34.0);
-            bands.push_back(bandRow);
-        }
-        bands.back().ids.push_back(i);
-    }
-    std::vector<Band> wrapped;
-    for (const Band &bandRow : bands) {
-        if (bandRow.span) {
-            wrapped.push_back(bandRow);
-            continue;
-        }
-        Band cur;
-        cur.top = bandRow.top;
-        cur.h = bandRow.h;
-        double used = 0;
-        for (int id : bandRow.ids) {
-            const double w = chipWidth(id, bandRow.top);
-            if (!cur.ids.empty() && used + w + gap > maxInner) {
-                wrapped.push_back(cur);
-                cur = Band();
-                cur.top = bandRow.top;
-                cur.h = bandRow.h;
-                used = 0;
-            }
-            cur.ids.push_back(id);
-            used += (used == 0.0 ? w : w + gap);
-        }
-        if (!cur.ids.empty()) wrapped.push_back(cur);
-    }
-    double contentW = 160;
-    for (const Band &bandRow : wrapped) {
-        if (bandRow.span) {
-            contentW = std::max(contentW, metrics.horizontalAdvance(screen.rows[static_cast<size_t>(bandRow.ids.front())].label) + 28.0);
-            continue;
-        }
-        double w = 0;
-        for (int id : bandRow.ids) w += chipWidth(id, bandRow.top);
-        if (bandRow.ids.size() > 1) w += gap * static_cast<double>(bandRow.ids.size() - 1);
-        contentW = std::max(contentW, w);
-    }
-    const double width = std::min(room.width(), contentW + pad * 2);
-    double height = band + 4;
-    for (const Band &bandRow : wrapped) height += bandRow.h + gap;
-    height += pad;
-    QPointF anchor(screen.pill.center());
-    for (const Slot &slot : screen.slots) {
-        if (slot.uid == QLatin1String("overflow")) anchor = slot.rect.center();
-    }
-    screen.menuRect = popupNear(screen, anchor, width, height);
-    screen.menuClose = closeBox(screen.menuRect);
-    const double inner = width - pad * 2;
-    double y = screen.menuRect.top() + band;
-    const double x0 = screen.menuRect.left() + pad;
-    for (const Band &bandRow : wrapped) {
-        if (bandRow.span) {
-            screen.menuRows[static_cast<size_t>(bandRow.ids.front())] = QRectF(x0, y, inner, bandRow.h);
-            y += bandRow.h + gap;
-            continue;
-        }
-        double rowW = 0;
-        for (int id : bandRow.ids) rowW += chipWidth(id, bandRow.top);
-        if (bandRow.ids.size() > 1) rowW += gap * static_cast<double>(bandRow.ids.size() - 1);
-        double x = x0 + std::max(0.0, (inner - rowW) / 2.0);
-        for (int id : bandRow.ids) {
-            const double w = chipWidth(id, bandRow.top);
-            screen.menuRows[static_cast<size_t>(id)] = QRectF(x, y, w, bandRow.h);
-            x += w + gap;
-        }
-        y += bandRow.h + gap;
-    }
-}
-
 void Dock::layoutWizard(Screen &screen) {
     screen.wizardRect = QRectF();
     screen.wizardClose = QRectF();
@@ -2939,10 +2831,6 @@ void Dock::layoutMenu(Screen &screen) {
     screen.subClose = QRectF();
     screen.subRows.clear();
     if (!screen.menu || screen.rows.empty()) return;
-    if (screen.menuUid == QLatin1String("overflow")) {
-        layoutOverflow(screen);
-        return;
-    }
     QFont menuFont(QStringLiteral("Fira Sans"));
     menuFont.setPixelSize(15);
     const QFontMetrics menuMetrics(menuFont);
@@ -4391,6 +4279,7 @@ void Dock::openMenu(Screen &screen, const QString &uid, const QString &appId) {
         return;
     }
     if (uid == QLatin1String("overflow")) {
+        // Vertical list. Emoji and Flags stay at the top. The three dots are upright.
         add(QStringLiteral("emoji"), QStringLiteral("Emoji"));
         add(QStringLiteral("flags"), QStringLiteral("Flags"));
         add(QStringLiteral("settings"), QStringLiteral("Settings"));
@@ -5404,7 +5293,8 @@ void Dock::paintScreen(QPainter &painter, Screen &screen) {
         if (slot.kind == Item::Kind::Search) {
             drawSearchGlyph(painter, slot.rect);
         } else if (slot.kind == Item::Kind::Overflow) {
-            drawMoreGlyph(painter, slot.rect, !horizontal());
+            // The three dots stand upright on every edge. The menu under them stays a vertical list.
+            drawMoreGlyph(painter, slot.rect, true);
         } else if (slot.kind == Item::Kind::TaskManager) {
             drawUsageBars(painter, slot.rect, cpu_, mem_, cpuReady_, memTotal_ > 0);
         } else if (slot.kind == Item::Kind::Grok) {
@@ -6797,6 +6687,9 @@ int Dock::selfTest() {
     bool sawSettings = false;
     bool sawAbout = false;
     bool sawContribute = false;
+    bool appletTrash = false;
+    bool appletTask = false;
+    bool appletGrok = false;
     int emojiAt = -1;
     int flagsAt = -1;
     for (int i = 0; i < static_cast<int>(menuScreen.rows.size()); ++i) {
@@ -6806,6 +6699,9 @@ int Dock::selfTest() {
         if (row.action == QLatin1String("contribute")) sawContribute = true;
         if (row.action == QLatin1String("emoji")) emojiAt = i;
         if (row.action == QLatin1String("flags")) flagsAt = i;
+        if (row.action == QLatin1String("trash-toggle") && row.toggle) appletTrash = true;
+        if (row.action == QLatin1String("task-toggle") && row.toggle) appletTask = true;
+        if (row.action == QLatin1String("grok-toggle") && row.toggle) appletGrok = true;
     }
     const QString frog = QString::fromUtf8("🐸");
     const QString germany = QString::fromUtf8("🇩🇪");
@@ -6818,7 +6714,7 @@ int Dock::selfTest() {
     applyKey(menuScreen, KEY_T, false);
     applyKey(menuScreen, KEY_E, false);
     if (!sawSettings || !sawAbout || !sawContribute || emojiAt != 0 || flagsAt != 1 ||
-        menuScreen.searchText != QLatin1String("te") || !wantsKeyboard()) {
+        !appletTrash || !appletTask || !appletGrok || menuScreen.searchText != QLatin1String("te") || !wantsKeyboard()) {
         std::fprintf(stderr, "magic-dock: menu or search self-test failed\n");
         return 1;
     }
@@ -7948,8 +7844,11 @@ int Dock::selfTest() {
     Screen &hiddenMenu = screen(9);
     openMenu(hiddenMenu, QStringLiteral("overflow"), {});
     bool sawToggle = false;
-    for (const MenuRow &row : hiddenMenu.rows)
+    for (const MenuRow &row : hiddenMenu.rows) {
         if (row.action == QLatin1String("grok-toggle")) sawToggle = true;
+        for (const MenuRow &child : row.sub)
+            if (child.action == QLatin1String("grok-toggle")) sawToggle = true;
+    }
     if (sawGrokSlot || sawToggle) {
         std::fprintf(stderr, "magic-dock: grok applet showed without the Grok CLI\n");
         return 1;
@@ -8051,14 +7950,14 @@ int Dock::selfTest() {
     }
     openMenu(screen(1), QStringLiteral("overflow"), {});
     relayout(screen(1));
-    if (screen(1).menuRect.isEmpty() || screen(1).menuRect.width() + 8 < screen(1).menuRect.height()) {
-        std::fprintf(stderr, "magic-dock: overflow menu is not a short row (%.0fx%.0f)\n", screen(1).menuRect.width(),
+    if (screen(1).menuRect.isEmpty() || screen(1).menuRect.height() < screen(1).menuRect.width()) {
+        std::fprintf(stderr, "magic-dock: overflow menu is not a vertical list (%.0fx%.0f)\n", screen(1).menuRect.width(),
                      screen(1).menuRect.height());
         return 1;
     }
-    if (screen(1).menuRows.size() < 2 || screen(1).menuRows[0].top() > screen(1).menuRows[1].top() + 1 ||
-        screen(1).menuRows[0].right() > screen(1).menuRows[1].left()) {
-        std::fprintf(stderr, "magic-dock: emoji and flags are not the top row of the menu\n");
+    if (screen(1).menuRows.size() < 2 || screen(1).menuRows[0].bottom() > screen(1).menuRows[1].top() + 1 ||
+        std::abs(screen(1).menuRows[0].left() - screen(1).menuRows[1].left()) > 1) {
+        std::fprintf(stderr, "magic-dock: emoji and flags are not stacked at the top of the menu\n");
         return 1;
     }
     openWizard(screen(1), QStringLiteral("emoji"));

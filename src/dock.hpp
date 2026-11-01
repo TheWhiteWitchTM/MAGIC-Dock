@@ -205,7 +205,6 @@ private:
     void layoutPopup(Screen &screen);
     void layoutPreviews(Screen &screen);
     void layoutMenu(Screen &screen);
-    void layoutOverflow(Screen &screen);
     void layoutSearch(Screen &screen);
     void layoutAbout(Screen &screen);
     void layoutWizard(Screen &screen);

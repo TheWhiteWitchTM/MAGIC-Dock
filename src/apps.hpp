@@ -67,6 +67,8 @@ private:
     QHash<QString, QString> byClass_;
     QHash<QString, QString> byExec_;
     QHash<QString, QString> byWeb_;
+    // Chrome --app=URL windows use chrome-<host>_<path>-<profile>, not the pinned id.
+    QHash<QString, QString> byUrl_;
     QString iconRoot_;
     QStringList extraDirs_;
     qint64 stamp_ = 0;
